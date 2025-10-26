@@ -53,16 +53,22 @@ fi
 # echo "✓ Testing deploy script..."
 # npm run deploy > /dev/null 2>&1 || { echo "❌ Deploy script failed"; exit 1; }
 
-# Run tests
-echo "✓ Running tests..."
-npm test || { echo "❌ Tests failed"; exit 1; }
+# Run basic tests
+echo "✓ Running basic end-to-end tests..."
+npm test || { echo "❌ Basic tests failed"; exit 1; }
+
+echo ""
+echo "✓ Running deletion verification test..."
+npm run verify-deletion || { echo "❌ Deletion verification failed"; exit 1; }
 
 echo ""
 echo "================================"
 echo "✅ All verifications passed!"
 echo ""
 echo "Available scripts:"
-echo "  npm run deploy  - Deploy contract to testnet"
-echo "  npm test        - Run end-to-end tests"
+echo "  npm run deploy          - Deploy contract to testnet"
+echo "  npm test                - Run end-to-end tests"
+echo "  npm run verify-deletion - Verify tunnel deletion"
+echo "  npm run test:all        - Run all tests"
 echo ""
 echo "Current package: $(grep PACKAGE_ID .env | cut -d= -f2)"

@@ -140,6 +140,7 @@ async function test() {
 
   tx2.moveCall({
     target: `${packageId}::tunnel::open_tunnel`,
+    typeArguments: ['0x2::sui::SUI'],
     arguments: [
       tx2.object(creatorConfig.objectId),
       tx2.pure.vector('u8', Array.from(payerPublicKey)),
@@ -194,6 +195,7 @@ async function test() {
   const tx3 = new Transaction();
   tx3.moveCall({
     target: `${packageId}::tunnel::claim`,
+    typeArguments: ['0x2::sui::SUI'],
     arguments: [
       tx3.object(tunnelId),
       tx3.pure.u64(claimAmount),
@@ -230,7 +232,7 @@ async function test() {
       options: { showContent: true },
     });
 
-    if (tunnelCheck.error || tunnelCheck.data?.content?.dataType === 'deleted') {
+    if (tunnelCheck.error || (tunnelCheck.data?.content as any)?.dataType === 'deleted') {
       console.log(`✅ Tunnel successfully deleted\n`);
     } else {
       console.log(`⚠️  Tunnel still exists\n`);
@@ -254,6 +256,7 @@ async function test() {
 
   tx5.moveCall({
     target: `${packageId}::tunnel::open_tunnel`,
+    typeArguments: ['0x2::sui::SUI'],
     arguments: [
       tx5.object(creatorConfig.objectId),
       tx5.pure.vector('u8', Array.from(payerPublicKey)),
@@ -290,6 +293,7 @@ async function test() {
   const tx6 = new Transaction();
   tx6.moveCall({
     target: `${packageId}::tunnel::init_close`,
+    typeArguments: ['0x2::sui::SUI'],
     arguments: [
       tx6.object(tunnelId2),
       tx6.object('0x6'),  // Clock object
@@ -328,6 +332,7 @@ async function test() {
   const tx7 = new Transaction();
   tx7.moveCall({
     target: `${packageId}::tunnel::close_with_signature`,
+    typeArguments: ['0x2::sui::SUI'],
     arguments: [
       tx7.object(tunnelId2),
       tx7.pure.u64(payerRefund2),

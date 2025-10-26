@@ -77,6 +77,49 @@ npm test
 ✅ All tests completed successfully!
 ```
 
+### 3. Verify Deletion Script (`npm run verify-deletion`)
+
+Specifically tests that tunnels are properly deleted after closing.
+
+**What it does:**
+- Creates a creator config
+- Opens a new tunnel with 0.01 SUI
+- Verifies tunnel exists before closing
+- Closes tunnel with signature
+- Verifies tunnel is deleted from chain
+
+**Usage:**
+```bash
+npm run verify-deletion
+```
+
+### 4. Run All Tests (`npm run test:all`)
+
+Runs both the basic tests and deletion verification.
+
+**Usage:**
+```bash
+npm run test:all
+```
+
+### 5. Verify All Script (`./verify-all.sh`)
+
+Comprehensive verification script that checks everything.
+
+**What it does:**
+- Checks Node.js and npm are installed
+- Installs dependencies if needed
+- Validates `.env` file exists
+- Runs TypeScript compilation check
+- Builds Move package
+- Verifies package ID is set
+- Runs all tests (basic + deletion verification)
+
+**Usage:**
+```bash
+./verify-all.sh
+```
+
 ## Utility Functions (`src/utils.ts`)
 
 The `utils.ts` file provides helper functions used by both deploy and test scripts:
@@ -164,12 +207,15 @@ npx tsc --noEmit
 ```
 scripts/
 ├── src/
-│   ├── deploy.ts      # Deployment script
-│   ├── test.ts        # End-to-end tests
-│   └── utils.ts       # Shared utilities
-├── package.json       # NPM scripts and dependencies
-├── tsconfig.json      # TypeScript configuration
-└── .env              # Environment configuration
+│   ├── deploy.ts           # Deployment script
+│   ├── test.ts             # End-to-end tests
+│   ├── verify-deletion.ts  # Deletion verification test
+│   └── utils.ts            # Shared utilities
+├── package.json            # NPM scripts and dependencies
+├── tsconfig.json           # TypeScript configuration
+├── verify-all.sh           # Comprehensive verification script
+├── SCRIPTS_GUIDE.md        # This guide
+└── .env                    # Environment configuration
 ```
 
 ## Testing Checklist
@@ -205,10 +251,49 @@ scripts/
 
 ## Latest Package
 
-**Current Package ID**: `0x05bed9c9f2617c2a8945dc229df101c398aa56972effe06ced9d411fdf8b3234`
+**Current Package ID**: `0x1c54bcef49f364f118c455ef5953b4b22f547d40e4abe98765af9290c63ad794`
 
 **Network**: Sui Testnet
 
-**Explorer**: https://testnet.suivision.xyz/package/0x05bed9c9f2617c2a8945dc229df101c398aa56972effe06ced9d411fdf8b3234
+**Explorer**: https://testnet.suivision.xyz/package/0x1c54bcef49f364f118c455ef5953b4b22f547d40e4abe98765af9290c63ad794
 
-**Important Change**: The `claim()` function now automatically closes and deletes the tunnel after claiming funds. This simplifies the tunnel lifecycle - for subsequent access, the payer must create a new tunnel.
+**Important Changes**:
+1. The `claim()` function now automatically closes and deletes the tunnel after claiming funds. This simplifies the tunnel lifecycle - for subsequent access, the payer must create a new tunnel.
+2. **Generic Coin Support**: The Tunnel module now supports any coin type via generics (`Tunnel<T>`). All functions require a type argument:
+   - For SUI: `typeArguments: ['0x2::sui::SUI']`
+   - For other coins: `typeArguments: ['<package>::<module>::<CoinType>']`
+
+## Generic Type Support
+
+The Tunnel module uses Move generics to support any coin type on Sui:
+
+```typescript
+// Example: Opening a tunnel with SUI
+tx.moveCall({
+  target: `${packageId}::tunnel::open_tunnel`,
+  typeArguments: ['0x2::sui::SUI'],  // Specify coin type
+  arguments: [
+    tx.object(creatorConfigId),
+    tx.pure.vector('u8', Array.from(payerPublicKey)),
+    coin,
+  ],
+});
+
+// Example: Opening a tunnel with USDC
+tx.moveCall({
+  target: `${packageId}::tunnel::open_tunnel`,
+  typeArguments: ['0x2::usdc::USDC'],  // Different coin type
+  arguments: [
+    tx.object(creatorConfigId),
+    tx.pure.vector('u8', Array.from(payerPublicKey)),
+    usdcCoin,
+  ],
+});
+```
+
+All generic functions require `typeArguments`:
+- `open_tunnel<T>`
+- `claim<T>`
+- `init_close<T>`
+- `finalize_close<T>`
+- `close_with_signature<T>`

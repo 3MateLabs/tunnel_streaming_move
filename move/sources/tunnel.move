@@ -17,7 +17,7 @@
 module tunnel::tunnel;
 
 use sui::coin::{Self, Coin};
-use sui::sui::SUI;
+use sui::balance::{Self, Balance};
 use sui::ed25519;
 use sui::bcs;
 use sui::clock::{Self, Clock};
@@ -48,7 +48,7 @@ public struct CreatorConfig has key, store {
 }
 
 /// Payment tunnel between payer and creator
-public struct Tunnel has key, store {
+public struct Tunnel<phantom T> has key, store {
     id: UID,
 
     // Party information
@@ -62,7 +62,7 @@ public struct Tunnel has key, store {
     // Balances
     total_deposit: u64,
     claimed_amount: u64,
-    balance: Coin<SUI>,
+    balance: Balance<T>,
 
     // Closure state
     is_closed: bool,
@@ -158,10 +158,10 @@ public entry fun create_creator_config(
 /// * `payer_public_key` - Payer's Ed25519 public key (32 bytes)
 /// * `deposit` - Payer's deposit
 /// * `ctx` - Transaction context
-public entry fun open_tunnel(
+public entry fun open_tunnel<T>(
     creator_config: &CreatorConfig,
     payer_public_key: vector<u8>,
-    deposit: Coin<SUI>,
+    deposit: Coin<T>,
     ctx: &mut TxContext,
 ) {
     let payer = ctx.sender();
@@ -181,7 +181,7 @@ public entry fun open_tunnel(
         creator_public_key: creator_config.public_key,
         total_deposit,
         claimed_amount: 0,
-        balance: deposit,
+        balance: coin::into_balance(deposit),
         is_closed: false,
         close_initiated_at: option::none(),
         close_initiated_by: option::none(),
@@ -213,8 +213,8 @@ public entry fun open_tunnel(
 /// * `nonce` - Unique nonce to prevent replay
 /// * `payer_signature` - Payer's signature on (tunnel_id || amount || nonce)
 /// * `ctx` - Transaction context
-public entry fun claim(
-    mut tunnel: Tunnel,
+public entry fun claim<T>(
+    mut tunnel: Tunnel<T>,
     amount: u64,
     nonce: u64,
     payer_signature: vector<u8>,
@@ -249,11 +249,11 @@ public entry fun claim(
     });
 
     // Split claimed amount for creator
-    let payout = coin::split(&mut tunnel.balance, amount, ctx);
+    let payout = coin::from_balance(balance::split(&mut tunnel.balance, amount), ctx);
     transfer::public_transfer(payout, creator);
 
     // Calculate refund for payer (remaining balance)
-    let refund_amount = coin::value(&tunnel.balance);
+    let refund_amount = balance::value(&tunnel.balance);
 
     // Emit close event
     sui::event::emit(TunnelClosed {
@@ -282,9 +282,9 @@ public entry fun claim(
 
     // Send remaining balance to payer or destroy if zero
     if (refund_amount > 0) {
-        transfer::public_transfer(balance, payer);
+        transfer::public_transfer(coin::from_balance(balance, ctx), payer);
     } else {
-        coin::destroy_zero(balance);
+        balance::destroy_zero(balance);
     };
 
     // Delete the tunnel object
@@ -297,8 +297,8 @@ public entry fun claim(
 /// * `tunnel` - Tunnel object
 /// * `clock` - Sui clock for timestamp
 /// * `ctx` - Transaction context
-public entry fun init_close(
-    tunnel: &mut Tunnel,
+public entry fun init_close<T>(
+    tunnel: &mut Tunnel<T>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -323,8 +323,8 @@ public entry fun init_close(
 /// * `tunnel` - Tunnel object
 /// * `clock` - Sui clock for timestamp
 /// * `ctx` - Transaction context
-public entry fun finalize_close(
-    tunnel: Tunnel,
+public entry fun finalize_close<T>(
+    tunnel: Tunnel<T>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -362,8 +362,8 @@ public entry fun finalize_close(
 /// * `nonce` - Unique nonce
 /// * `creator_signature` - Creator's signature
 /// * `ctx` - Transaction context
-public entry fun close_with_signature(
-    tunnel: Tunnel,
+public entry fun close_with_signature<T>(
+    tunnel: Tunnel<T>,
     payer_refund: u64,
     creator_payout: u64,
     nonce: u64,
@@ -438,8 +438,8 @@ fun verify_ed25519_signature(
 }
 
 /// Close tunnel and distribute funds
-fun close_tunnel_and_distribute(
-    mut tunnel: Tunnel,
+fun close_tunnel_and_distribute<T>(
+    mut tunnel: Tunnel<T>,
     payer_refund: u64,
     creator_payout: u64,
     closed_by: address,
@@ -453,15 +453,15 @@ fun close_tunnel_and_distribute(
 
     // Split funds
     let payer_coin = if (payer_refund > 0) {
-        coin::split(&mut tunnel.balance, payer_refund, ctx)
+        coin::from_balance(balance::split(&mut tunnel.balance, payer_refund), ctx)
     } else {
-        coin::zero<SUI>(ctx)
+        coin::zero<T>(ctx)
     };
 
     let creator_coin = if (creator_payout > 0) {
-        coin::split(&mut tunnel.balance, creator_payout, ctx)
+        coin::from_balance(balance::split(&mut tunnel.balance, creator_payout), ctx)
     } else {
-        coin::zero<SUI>(ctx)
+        coin::zero<T>(ctx)
     };
 
     sui::event::emit(TunnelClosed {
@@ -482,7 +482,7 @@ fun close_tunnel_and_distribute(
 }
 
 /// Destroy tunnel object
-fun destroy_tunnel(tunnel: Tunnel) {
+fun destroy_tunnel<T>(tunnel: Tunnel<T>) {
     let Tunnel {
         id,
         payer: _,
@@ -497,7 +497,7 @@ fun destroy_tunnel(tunnel: Tunnel) {
         close_initiated_by: _,
     } = tunnel;
 
-    coin::destroy_zero(remaining_balance);
+    balance::destroy_zero(remaining_balance);
     object::delete(id);
 }
 
@@ -517,31 +517,31 @@ public fun creator_config_metadata(config: &CreatorConfig): String {
     config.metadata
 }
 
-public fun tunnel_id(tunnel: &Tunnel): ID {
+public fun tunnel_id<T>(tunnel: &Tunnel<T>): ID {
     object::id(tunnel)
 }
 
-public fun payer(tunnel: &Tunnel): address {
+public fun payer<T>(tunnel: &Tunnel<T>): address {
     tunnel.payer
 }
 
-public fun creator(tunnel: &Tunnel): address {
+public fun creator<T>(tunnel: &Tunnel<T>): address {
     tunnel.creator
 }
 
-public fun is_closed(tunnel: &Tunnel): bool {
+public fun is_closed<T>(tunnel: &Tunnel<T>): bool {
     tunnel.is_closed
 }
 
-public fun total_deposit(tunnel: &Tunnel): u64 {
+public fun total_deposit<T>(tunnel: &Tunnel<T>): u64 {
     tunnel.total_deposit
 }
 
-public fun claimed_amount(tunnel: &Tunnel): u64 {
+public fun claimed_amount<T>(tunnel: &Tunnel<T>): u64 {
     tunnel.claimed_amount
 }
 
-public fun remaining_balance(tunnel: &Tunnel): u64 {
+public fun remaining_balance<T>(tunnel: &Tunnel<T>): u64 {
     tunnel.total_deposit - tunnel.claimed_amount
 }
 

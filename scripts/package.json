@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "deploy": "tsx src/deploy.ts",
-    "test": "tsx src/test.ts"
+    "test": "tsx src/test.ts",
+    "verify-deletion": "tsx src/verify-deletion.ts",
+    "test:all": "npm run test && npm run verify-deletion"
   },
   "dependencies": {
     "@mysten/sui": "^1.15.0",

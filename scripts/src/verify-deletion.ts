@@ -71,6 +71,7 @@ async function verifyDeletion() {
   const [coin] = tx2.splitCoins(tx2.gas, [suiToMist(0.01)]);
   tx2.moveCall({
     target: `${packageId}::tunnel::open_tunnel`,
+    typeArguments: ['0x2::sui::SUI'],
     arguments: [
       tx2.object(configId!),
       tx2.pure.vector('u8', Array.from(payerPublicKey)),
@@ -119,6 +120,7 @@ async function verifyDeletion() {
   const tx3 = new Transaction();
   tx3.moveCall({
     target: `${packageId}::tunnel::close_with_signature`,
+    typeArguments: ['0x2::sui::SUI'],
     arguments: [
       tx3.object(tunnelId!),
       tx3.pure.u64(suiToMist(0.01)),
@@ -154,11 +156,11 @@ async function verifyDeletion() {
     if (tunnelAfter.error) {
       console.log(`✅ TUNNEL DELETED: Object not found`);
       console.log(`   Error: ${tunnelAfter.error.code}\n`);
-    } else if (tunnelAfter.data?.content?.dataType === 'deleted') {
+    } else if ((tunnelAfter.data?.content as any)?.dataType === 'deleted') {
       console.log(`✅ TUNNEL DELETED: Object status is 'deleted'\n`);
     } else {
       console.log(`⚠️  Tunnel still exists?`);
-      console.log(`   Status: ${tunnelAfter.data?.content?.dataType}\n`);
+      console.log(`   Status: ${(tunnelAfter.data?.content as any)?.dataType}\n`);
     }
   } catch (e: any) {
     if (e.message?.includes('not found') || e.message?.includes('deleted')) {
