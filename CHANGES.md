@@ -6,7 +6,31 @@ Successfully converted the Tunnel module to support generic coin types and fixed
 
 ## Changes Made
 
-### 1. Move Module - Generic Type Support
+### 1. Move.toml - Fixed Dependency Management
+
+**File**: `move/Move.toml`
+
+**Problem**: Move tests were failing with `MISSING_DEPENDENCY` error due to explicit Sui dependency declaration conflicting with automatic dependency management.
+
+**Solution**: Removed explicit Sui dependency to enable automatic framework dependency resolution.
+
+**Before**:
+```toml
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+```
+
+**After**:
+```toml
+[dependencies]
+# Dependencies auto-managed by Sui toolchain
+```
+
+**Result**: All 7 Move unit tests now pass ✅
+
+See [MOVE_TEST_FIX.md](MOVE_TEST_FIX.md) for detailed analysis.
+
+### 2. Move Module - Generic Type Support
 
 **File**: `move/sources/tunnel.move`
 

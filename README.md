@@ -215,11 +215,32 @@ cd move
 sui move build
 ```
 
+**Output:**
+```
+INCLUDING DEPENDENCY Bridge
+INCLUDING DEPENDENCY SuiSystem
+INCLUDING DEPENDENCY Sui
+INCLUDING DEPENDENCY MoveStdlib
+BUILDING tunnel
+```
+
 ### Running Move Tests
 
 ```bash
 cd move
 sui move test
+```
+
+**Output:**
+```
+[ PASS    ] tunnel::tunnel_tests::test_bcs_u64_encoding
+[ PASS    ] tunnel::tunnel_tests::test_close_message_different_amounts
+[ PASS    ] tunnel::tunnel_tests::test_construct_claim_message
+[ PASS    ] tunnel::tunnel_tests::test_construct_close_message
+[ PASS    ] tunnel::tunnel_tests::test_different_inputs_different_messages
+[ PASS    ] tunnel::tunnel_tests::test_different_tunnel_ids
+[ PASS    ] tunnel::tunnel_tests::test_message_deterministic
+Test result: OK. Total tests: 7; passed: 7; failed: 0
 ```
 
 ### TypeScript Development

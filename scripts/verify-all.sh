@@ -37,9 +37,13 @@ echo "✓ Checking TypeScript compilation..."
 npx tsc --noEmit || { echo "❌ TypeScript compilation failed"; exit 1; }
 
 # Check Move package
-echo "✓ Checking Move package..."
+echo "✓ Checking Move package build..."
 cd ../move
 sui move build > /dev/null 2>&1 || { echo "❌ Move build failed"; exit 1; }
+
+# Run Move tests
+echo "✓ Running Move unit tests..."
+sui move test > /dev/null 2>&1 || { echo "❌ Move tests failed"; exit 1; }
 cd ../scripts
 
 # Check package ID

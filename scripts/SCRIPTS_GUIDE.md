@@ -112,12 +112,57 @@ Comprehensive verification script that checks everything.
 - Validates `.env` file exists
 - Runs TypeScript compilation check
 - Builds Move package
+- **Runs Move unit tests (7 tests)**
 - Verifies package ID is set
-- Runs all tests (basic + deletion verification)
+- Runs all TypeScript tests (basic + deletion verification)
 
 **Usage:**
 ```bash
 ./verify-all.sh
+```
+
+**Output includes:**
+```
+✓ Checking Node.js...
+✓ Checking npm...
+✓ Checking dependencies...
+✓ Checking .env file...
+✓ Checking TypeScript compilation...
+✓ Checking Move package build...
+✓ Running Move unit tests...          ← 7 Move tests
+✓ Checking package ID in .env...
+✓ Running basic end-to-end tests...   ← TypeScript E2E
+✓ Running deletion verification test... ← Deletion tests
+
+✅ All verifications passed!
+```
+
+### 6. Move Unit Tests (Direct)
+
+Run Move unit tests directly without TypeScript tests.
+
+**What it does:**
+- Tests message construction helpers
+- Tests BCS encoding
+- Tests message determinism
+- 7 unit tests covering core functions
+
+**Usage:**
+```bash
+cd ../move
+sui move test
+```
+
+**Output:**
+```
+[ PASS    ] tunnel::tunnel_tests::test_bcs_u64_encoding
+[ PASS    ] tunnel::tunnel_tests::test_close_message_different_amounts
+[ PASS    ] tunnel::tunnel_tests::test_construct_claim_message
+[ PASS    ] tunnel::tunnel_tests::test_construct_close_message
+[ PASS    ] tunnel::tunnel_tests::test_different_inputs_different_messages
+[ PASS    ] tunnel::tunnel_tests::test_different_tunnel_ids
+[ PASS    ] tunnel::tunnel_tests::test_message_deterministic
+Test result: OK. Total tests: 7; passed: 7; failed: 0
 ```
 
 ## Utility Functions (`src/utils.ts`)
