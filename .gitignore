@@ -1,0 +1,21 @@
+# Move build artifacts
+move/build/
+move/.lock
+
+# Node modules
+scripts/node_modules/
+scripts/dist/
+
+# Environment files
+scripts/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
