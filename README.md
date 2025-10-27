@@ -170,10 +170,12 @@ npm run test:all
 ## Current Deployment
 
 **Network**: Sui Testnet
-**Package ID**: `0x1c54bcef49f364f118c455ef5953b4b22f547d40e4abe98765af9290c63ad794`
-**Explorer**: [View on Sui Vision](https://testnet.suivision.xyz/package/0x1c54bcef49f364f118c455ef5953b4b22f547d40e4abe98765af9290c63ad794)
+**Package ID**: `0xd14746e236ce1152e8388f2a3e2696c4b3d611970ef9f8f5a9b644a43ef83d5c`
+**Explorer**: [View on Sui Vision](https://testnet.suivision.xyz/package/0xd14746e236ce1152e8388f2a3e2696c4b3d611970ef9f8f5a9b644a43ef83d5c)
 
 ## Payment Flow
+
+### Option 1: Creator Claims + Immediate Close (with payer's authorization)
 
 ```
 ┌─────────────┐                    ┌─────────────┐
@@ -192,19 +194,75 @@ npm run test:all
        │  <─────────────────────────────  │
        │                                  │
        │ 4. claim<T>()                    │
-       │    (with signature)              │
+       │    (with payer signature)        │
        │    → Tunnel deleted              │
        │                                  │
        ▼                                  ▼
 ```
 
+### Option 2: Agreed Close (with payer's authorization)
+
+```
+┌─────────────┐                    ┌─────────────┐
+│   Creator   │                    │    Payer    │
+└──────┬──────┘                    └──────┬──────┘
+       │                                  │
+       │ 1. Negotiate close terms         │
+       │ <─────────────────────────────>  │
+       │                                  │
+       │                                  │ 2. Sign close message
+       │                                  │    (payer_refund, creator_payout)
+       │  <─────────────────────────────  │
+       │                                  │
+       │ 3. close_with_signature<T>()     │
+       │    (with payer signature)        │
+       │    → Immediate close             │
+       │                                  │
+       ▼                                  ▼
+```
+
+### Option 3: Payer-Initiated Close (grace period)
+
+```
+┌─────────────┐                    ┌─────────────┐
+│   Creator   │                    │    Payer    │
+└──────┬──────┘                    └──────┬──────┘
+       │                                  │
+       │                                  │ 1. init_close<T>()
+       │                                  │    → Grace period starts
+       │  <─────────────────────────────  │
+       │                                  │
+       │ 2. 60-minute grace period        │
+       │    (creator can respond)         │
+       │                                  │
+       │                                  │ 3. finalize_close<T>()
+       │                                  │    → Full refund to payer
+       │  <─────────────────────────────  │
+       │                                  │
+       ▼                                  ▼
+```
+
+## Signature Requirements
+
+### Who Signs What
+
+| Action | Function | Who Signs | What They Sign |
+|--------|----------|-----------|----------------|
+| **Claim Funds** | `claim<T>()` | Payer | `tunnel_id \|\| amount \|\| nonce` |
+| **Immediate Close** | `close_with_signature<T>()` | Payer | `tunnel_id \|\| payer_refund \|\| creator_payout \|\| nonce` |
+| **Initiate Close** | `init_close<T>()` | None | No signature required (60-min grace period) |
+| **Finalize Close** | `finalize_close<T>()` | None | No signature required (after grace period) |
+
+**Key Point**: Payer authorizes all immediate actions through signatures. This prevents the creator from unilaterally taking funds.
+
 ## Security Considerations
 
 1. **Ed25519 Signatures**: Industry-standard elliptic curve signatures
-2. **Nonce Protection**: Prevents replay attacks
-3. **Grace Period**: Allows dispute resolution
-4. **Balance Conservation**: Enforced at contract level
-5. **Shared Object Safety**: Proper concurrent access patterns
+2. **Payer Authorization**: Payer must sign to authorize immediate close or claims
+3. **Nonce Protection**: Prevents replay attacks
+4. **Grace Period**: Allows payer to exit if creator unresponsive (60 minutes)
+5. **Balance Conservation**: Enforced at contract level
+6. **Shared Object Safety**: Proper concurrent access patterns
 
 ## Development
 
@@ -276,7 +334,10 @@ tsx src/verify-deletion.ts
 - Run `npm install` to ensure dependencies are installed
 
 **"Signature verification failed"**
-- Ensure correct keypair is used (payer signs claims, creator signs closes)
+- **IMPORTANT**: Payer signs ALL signatures (both claims and closes)
+- For `claim()`: Payer signs to authorize creator's claim
+- For `close_with_signature()`: Payer signs to authorize the close
+- Creator never signs - only payer signs
 
 ## License
 

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import {
   createKeypair,
   getPublicKey,
-  signCloseMessage,
+  signClaimMessage,
   bytesToHex,
   suiToMist,
   getCreatedObjects,
@@ -41,12 +41,19 @@ async function verifyDeletion() {
 
   // Step 1: Create creator config
   console.log('📝 Step 1: Creating creator config...');
+  const creatorAddress = creatorKeypair.toSuiAddress();
   const tx1 = new Transaction();
   tx1.moveCall({
     target: `${packageId}::tunnel::create_creator_config`,
     arguments: [
+      tx1.pure.address(creatorAddress),  // operator (creator is operator)
+      tx1.pure.address(creatorAddress),  // fee_receiver (fees go to creator)
       tx1.pure.vector('u8', Array.from(creatorPublicKey)),
       tx1.pure.string('Deletion test config'),
+      tx1.pure.u64(500),   // referrer_fee_bps: 5%
+      tx1.pure.u64(200),   // platform_fee_bps: 2%
+      tx1.pure.address(creatorAddress),  // platform_address
+      tx1.pure.u64(1000),  // grace_period_ms: 1 second (for quick testing)
     ],
   });
 
@@ -75,6 +82,7 @@ async function verifyDeletion() {
     arguments: [
       tx2.object(configId!),
       tx2.pure.vector('u8', Array.from(payerPublicKey)),
+      tx2.pure.address('0x0'),  // referrer: no referrer for this test
       coin,
     ],
   });
@@ -107,39 +115,53 @@ async function verifyDeletion() {
     console.log(`❌ Could not fetch tunnel: ${e}\n`);
   }
 
-  // Step 4: Close tunnel with signature
-  console.log('🔒 Step 4: Closing tunnel with signature...');
-  const { signature } = await signCloseMessage(
-    creatorKeypair,
+  // Step 4: Claim and close tunnel in single PTB
+  console.log('🔒 Step 4: Claiming full amount and closing tunnel...');
+  const claimAmount = suiToMist(0.01);  // Cumulative amount
+  const claimNonce = BigInt(1);
+
+  // Payer signs the claim message
+  const { signature: claimSignature } = await signClaimMessage(
+    payerKeypair,
     tunnelId!,
-    suiToMist(0.01),
-    BigInt(0),
-    BigInt(1),
+    claimAmount,
+    claimNonce,
   );
 
   const tx3 = new Transaction();
-  tx3.moveCall({
-    target: `${packageId}::tunnel::close_with_signature`,
+
+  // Call claim() - returns ClaimReceipt
+  const [receipt] = tx3.moveCall({
+    target: `${packageId}::tunnel::claim`,
     typeArguments: ['0x2::sui::SUI'],
     arguments: [
       tx3.object(tunnelId!),
-      tx3.pure.u64(suiToMist(0.01)),
-      tx3.pure.u64(0),
-      tx3.pure.u64(1),
-      tx3.pure.vector('u8', Array.from(signature)),
+      tx3.pure.u64(claimAmount),
+      tx3.pure.u64(claimNonce),
+      tx3.pure.vector('u8', Array.from(claimSignature)),
+    ],
+  });
+
+  // Use receipt to close tunnel
+  tx3.moveCall({
+    target: `${packageId}::tunnel::close_with_receipt`,
+    typeArguments: ['0x2::sui::SUI'],
+    arguments: [
+      tx3.object(tunnelId!),
+      receipt,
     ],
   });
 
   const result3 = await client.signAndExecuteTransaction({
     transaction: tx3,
-    signer: payerKeypair,
+    signer: creatorKeypair,  // Creator (or operator) claims and closes
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
   });
 
   // Wait for transaction to be finalized
   await waitForTransaction(client, result3.digest);
 
-  console.log(`✅ Tunnel closed: ${result3.digest}\n`);
+  console.log(`✅ Tunnel claimed and closed: ${result3.digest}\n`);
 
   // Step 5: Try to fetch tunnel after close (should be deleted)
   console.log('🔍 Step 5: Checking if tunnel was deleted...');

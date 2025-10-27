@@ -120,10 +120,10 @@ export async function signClaimMessage(
 }
 
 /**
- * Sign a close message (for creator to agree on closure terms)
+ * Sign a close message (for payer to authorize closure terms)
  */
 export async function signCloseMessage(
-  creatorKeypair: Ed25519Keypair,
+  payerKeypair: Ed25519Keypair,
   tunnelId: string,
   payerRefund: bigint,
   creatorPayout: bigint,
@@ -131,7 +131,7 @@ export async function signCloseMessage(
 ): Promise<{ signature: Uint8Array; message: Uint8Array }> {
   const tunnelIdBytes = objectIdToBytes(tunnelId);
   const message = constructCloseMessage(tunnelIdBytes, payerRefund, creatorPayout, nonce);
-  const signature = await signMessage(creatorKeypair, message);
+  const signature = await signMessage(payerKeypair, message);
 
   return { signature, message };
 }

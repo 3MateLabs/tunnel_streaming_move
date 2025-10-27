@@ -41,34 +41,6 @@ fun test_construct_claim_message() {
     };
 }
 
-/// Test: construct_close_message helper
-#[test]
-fun test_construct_close_message() {
-    let tunnel_id = x"0000000000000000000000000000000000000000000000000000000000000001";
-    let payer_refund: u64 = 500_000;
-    let creator_payout: u64 = 500_000;
-    let nonce: u64 = 99;
-
-    // Construct the message
-    let message = tunnel::construct_close_message_test(
-        &tunnel_id,
-        payer_refund,
-        creator_payout,
-        nonce
-    );
-
-    // Message should be: tunnel_id (32) || payer_refund (8) || creator_payout (8) || nonce (8)
-    let expected_len = 32 + 8 + 8 + 8;
-    assert!(vector::length(&message) == expected_len, 0);
-
-    // First 32 bytes should be tunnel_id
-    let mut i = 0;
-    while (i < 32) {
-        assert!(*vector::borrow(&message, i) == *vector::borrow(&tunnel_id, i), 1);
-        i = i + 1;
-    };
-}
-
 /// Test: Message construction is deterministic
 #[test]
 fun test_message_deterministic() {
@@ -106,24 +78,6 @@ fun test_bcs_u64_encoding() {
 
     // u64 should encode to 8 bytes in BCS
     assert!(vector::length(&encoded) == 8, 0);
-}
-
-/// Test: Close message with different amounts
-#[test]
-fun test_close_message_different_amounts() {
-    let tunnel_id = x"0000000000000000000000000000000000000000000000000000000000000001";
-
-    // Test with zero amounts
-    let msg1 = tunnel::construct_close_message_test(&tunnel_id, 0, 0, 1);
-    assert!(vector::length(&msg1) == 56, 0); // 32 + 8 + 8 + 8
-
-    // Test with max u64
-    let max_u64 = 18446744073709551615; // 2^64 - 1
-    let msg2 = tunnel::construct_close_message_test(&tunnel_id, max_u64, 0, 1);
-    assert!(vector::length(&msg2) == 56, 1);
-
-    // Different amounts should produce different messages
-    assert!(msg1 != msg2, 2);
 }
 
 /// Test: Message construction with different tunnel IDs

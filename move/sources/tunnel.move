@@ -16,12 +16,12 @@
 /// 5. Close via `init_close()` + `finalize_close()` or `close_with_signature()`
 module tunnel::tunnel;
 
-use sui::coin::{Self, Coin};
+use std::string::String;
 use sui::balance::{Self, Balance};
-use sui::ed25519;
 use sui::bcs;
 use sui::clock::{Self, Clock};
-use std::string::String;
+use sui::coin::{Self, Coin};
+use sui::ed25519;
 
 /// Error codes
 const E_TUNNEL_ALREADY_CLOSED: u64 = 1;
@@ -32,42 +32,65 @@ const E_INVALID_PUBLIC_KEY: u64 = 5;
 const E_CLOSE_NOT_INITIATED: u64 = 6;
 const E_GRACE_PERIOD_NOT_ELAPSED: u64 = 7;
 const E_INVALID_AMOUNT: u64 = 8;
+const E_INVALID_FEE_PERCENTAGE: u64 = 9;
 
-/// Grace period for tunnel closure (60 minutes in milliseconds)
-const GRACE_PERIOD_MS: u64 = 3600000;
+/// Basis points for percentage calculations (10000 = 100%)
+const BASIS_POINTS: u64 = 10000;
 
 /// Shared object: Creator's configuration
 public struct CreatorConfig has key, store {
     id: UID,
-    /// Creator's Sui address
+    /// Creator's Sui address (abstracted wallet, can't operate contracts)
     creator: address,
+    /// Operator address (can claim fees and close tunnels on behalf of creator)
+    operator: address,
+    /// Fee receiver address (where creator's fees are sent)
+    fee_receiver: address,
     /// Creator's Ed25519 public key (32 bytes)
     public_key: vector<u8>,
     /// Optional metadata (e.g., creator name, description)
     metadata: String,
+    /// Referrer fee percentage in basis points (e.g., 500 = 5%)
+    referrer_fee_bps: u64,
+    /// Platform fee percentage in basis points (e.g., 200 = 2%)
+    platform_fee_bps: u64,
+    /// Platform address to receive platform fees
+    platform_address: address,
+    /// Grace period for tunnel closure in milliseconds (e.g., 3600000 = 60 minutes, 1000 = 1 second)
+    grace_period_ms: u64,
 }
 
 /// Payment tunnel between payer and creator
 public struct Tunnel<phantom T> has key, store {
     id: UID,
-
     // Party information
     payer: address,
     creator: address,
-
+    operator: address, // Operator who can claim fees and close tunnels
+    fee_receiver: address, // Address where creator's fees are sent
+    referrer: Option<address>, // Optional referrer who gets a fee
     // Public keys
     payer_public_key: vector<u8>,
     creator_public_key: vector<u8>,
-
+    // Fee configuration (copied from CreatorConfig at tunnel creation)
+    referrer_fee_bps: u64,
+    platform_fee_bps: u64,
+    platform_address: address,
+    grace_period_ms: u64, // Grace period in milliseconds
     // Balances
     total_deposit: u64,
     claimed_amount: u64,
     balance: Balance<T>,
-
     // Closure state
     is_closed: bool,
-    close_initiated_at: Option<u64>,  // Timestamp when close was initiated
+    close_initiated_at: Option<u64>, // Timestamp when close was initiated
     close_initiated_by: Option<address>,
+}
+
+/// Capability to close tunnel after claiming
+/// Returned by claim() function, can be used to close the tunnel
+public struct ClaimReceipt has drop {
+    tunnel_id: ID,
 }
 
 /// Event: Creator config created
@@ -119,21 +142,39 @@ public struct TunnelClosed has copy, drop {
 /// # Arguments
 /// * `public_key` - Creator's Ed25519 public key (32 bytes)
 /// * `metadata` - Optional metadata (e.g., creator name, description)
+/// * `referrer_fee_bps` - Referrer fee in basis points (e.g., 500 = 5%)
+/// * `platform_fee_bps` - Platform fee in basis points (e.g., 200 = 2%)
+/// * `platform_address` - Platform address to receive fees
 /// * `ctx` - Transaction context
-public entry fun create_creator_config(
+public fun create_creator_config(
+    operator: address,
+    fee_receiver: address,
     public_key: vector<u8>,
     metadata: String,
+    referrer_fee_bps: u64,
+    platform_fee_bps: u64,
+    platform_address: address,
+    grace_period_ms: u64,
     ctx: &mut TxContext,
 ) {
     // Validate public key size (Ed25519 = 32 bytes)
     assert!(vector::length(&public_key) == 32, E_INVALID_PUBLIC_KEY);
 
+    // Validate fee percentages don't exceed 100%
+    assert!(referrer_fee_bps + platform_fee_bps < BASIS_POINTS, E_INVALID_FEE_PERCENTAGE);
+
     let creator = ctx.sender();
     let config = CreatorConfig {
         id: object::new(ctx),
         creator,
+        operator,
+        fee_receiver,
         public_key,
         metadata,
+        referrer_fee_bps,
+        platform_fee_bps,
+        platform_address,
+        grace_period_ms,
     };
 
     let config_id = object::id(&config);
@@ -156,11 +197,13 @@ public entry fun create_creator_config(
 /// # Arguments
 /// * `creator_config` - Creator's configuration (shared object reference)
 /// * `payer_public_key` - Payer's Ed25519 public key (32 bytes)
+/// * `referrer` - Optional referrer address (use 0x0 for none)
 /// * `deposit` - Payer's deposit
 /// * `ctx` - Transaction context
-public entry fun open_tunnel<T>(
+public fun open_tunnel<T>(
     creator_config: &CreatorConfig,
     payer_public_key: vector<u8>,
+    referrer: address,
     deposit: Coin<T>,
     ctx: &mut TxContext,
 ) {
@@ -173,12 +216,26 @@ public entry fun open_tunnel<T>(
     let total_deposit = coin::value(&deposit);
     assert!(total_deposit > 0, E_INVALID_AMOUNT);
 
+    // Set referrer as option (0x0 means none)
+    let referrer_opt = if (referrer == @0x0) {
+        option::none()
+    } else {
+        option::some(referrer)
+    };
+
     let tunnel = Tunnel {
         id: object::new(ctx),
         payer,
         creator,
+        operator: creator_config.operator,
+        fee_receiver: creator_config.fee_receiver,
+        referrer: referrer_opt,
         payer_public_key,
         creator_public_key: creator_config.public_key,
+        referrer_fee_bps: creator_config.referrer_fee_bps,
+        platform_fee_bps: creator_config.platform_fee_bps,
+        platform_address: creator_config.platform_address,
+        grace_period_ms: creator_config.grace_period_ms,
         total_deposit,
         claimed_amount: 0,
         balance: coin::into_balance(deposit),
@@ -199,96 +256,110 @@ public entry fun open_tunnel<T>(
     transfer::share_object(tunnel);
 }
 
-/// Claim funds from tunnel using payer's signature and close tunnel
+/// Claim funds from tunnel using payer's cumulative signature
 ///
-/// This function claims the specified amount and closes the tunnel.
-/// Any remaining balance is refunded to the payer.
-/// The tunnel is deleted after this operation.
+/// IMPORTANT: Amount is CUMULATIVE (total authorized up to now), not incremental.
+/// Example: Tunnel has 10 SUI
+///   - First claim with amount=5: claims 5 SUI (claimed_amount becomes 5)
+///   - Second claim with amount=6: claims 1 more SUI (6-5=1, claimed_amount becomes 6)
 ///
-/// Message format for signature: tunnel_id || amount || nonce
+/// Returns ClaimReceipt that can be used to close the tunnel.
+///
+/// Message format for signature: tunnel_id || cumulative_amount || nonce
 ///
 /// # Arguments
-/// * `tunnel` - Tunnel object (consumed)
-/// * `amount` - Amount to claim
+/// * `tunnel` - Tunnel object (remains open)
+/// * `cumulative_amount` - Total amount authorized to claim up to now (must be > claimed_amount)
 /// * `nonce` - Unique nonce to prevent replay
-/// * `payer_signature` - Payer's signature on (tunnel_id || amount || nonce)
+/// * `payer_signature` - Payer's signature on (tunnel_id || cumulative_amount || nonce)
 /// * `ctx` - Transaction context
-public entry fun claim<T>(
-    mut tunnel: Tunnel<T>,
-    amount: u64,
+public fun claim<T>(
+    tunnel: &mut Tunnel<T>,
+    cumulative_amount: u64,
     nonce: u64,
     payer_signature: vector<u8>,
     ctx: &mut TxContext,
-) {
-    // Only creator can claim
-    assert!(ctx.sender() == tunnel.creator, E_NOT_AUTHORIZED);
+): ClaimReceipt {
+    // Only creator or operator can claim
+    let sender = ctx.sender();
+    assert!(sender == tunnel.creator || sender == tunnel.operator, E_NOT_AUTHORIZED);
     assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
 
-    // Check sufficient balance
-    let remaining_balance = tunnel.total_deposit - tunnel.claimed_amount;
-    assert!(amount <= remaining_balance, E_INSUFFICIENT_BALANCE);
+    // Cumulative amount must be greater than already claimed amount
+    assert!(cumulative_amount > tunnel.claimed_amount, E_INVALID_AMOUNT);
 
-    // Construct message: tunnel_id || amount || nonce
-    let tunnel_id = object::uid_to_bytes(&tunnel.id);
-    let message = construct_claim_message(&tunnel_id, amount, nonce);
+    // Check sufficient balance for the increment
+    assert!(cumulative_amount <= tunnel.total_deposit, E_INSUFFICIENT_BALANCE);
+
+    // Construct message: tunnel_id || cumulative_amount || nonce
+    let tunnel_id_bytes = object::uid_to_bytes(&tunnel.id);
+    let message = construct_claim_message(&tunnel_id_bytes, cumulative_amount, nonce);
 
     // Verify payer's signature
     verify_ed25519_signature(&payer_signature, &tunnel.payer_public_key, &message);
 
-    // Store addresses before destructuring
-    let payer = tunnel.payer;
-    let creator = tunnel.creator;
-    let tunnel_id_for_event = object::uid_to_inner(&tunnel.id);
+    // Calculate increment (actual amount to claim this time)
+    let claim_increment = cumulative_amount - tunnel.claimed_amount;
+
+    // Store addresses and fee config
+    let fee_receiver = tunnel.fee_receiver;
+    let referrer = tunnel.referrer;
+    let referrer_fee_bps = tunnel.referrer_fee_bps;
+    let platform_fee_bps = tunnel.platform_fee_bps;
+    let platform_address = tunnel.platform_address;
+
+    // Update claimed amount to new cumulative total
+    tunnel.claimed_amount = cumulative_amount;
 
     // Emit claim event
     sui::event::emit(FundsClaimed {
-        tunnel_id: tunnel_id_for_event,
-        amount,
-        total_claimed: tunnel.claimed_amount + amount,
-        claimed_by: ctx.sender(),
+        tunnel_id: object::uid_to_inner(&tunnel.id),
+        amount: claim_increment,
+        total_claimed: tunnel.claimed_amount,
+        claimed_by: sender,
     });
 
-    // Split claimed amount for creator
-    let payout = coin::from_balance(balance::split(&mut tunnel.balance, amount), ctx);
-    transfer::public_transfer(payout, creator);
+    // Calculate fees on the increment
+    let referrer_fee = (claim_increment * referrer_fee_bps) / BASIS_POINTS;
+    let platform_fee = (claim_increment * platform_fee_bps) / BASIS_POINTS;
+    let fee_receiver_amount = claim_increment - referrer_fee - platform_fee;
 
-    // Calculate refund for payer (remaining balance)
-    let refund_amount = balance::value(&tunnel.balance);
+    // Split and distribute claimed increment
+    let mut claimed_balance = balance::split(&mut tunnel.balance, claim_increment);
 
-    // Emit close event
-    sui::event::emit(TunnelClosed {
-        tunnel_id: tunnel_id_for_event,
-        payer,
-        creator,
-        payer_refund: refund_amount,
-        creator_payout: amount,
-        closed_by: ctx.sender(),
-    });
+    // Distribute to fee_receiver
+    let fee_receiver_coin = coin::from_balance(
+        balance::split(&mut claimed_balance, fee_receiver_amount),
+        ctx,
+    );
+    transfer::public_transfer(fee_receiver_coin, fee_receiver);
 
-    // Destructure and delete the tunnel
-    let Tunnel {
-        id,
-        creator: _,
-        payer: _,
-        payer_public_key: _,
-        creator_public_key: _,
-        total_deposit: _,
-        claimed_amount: _,
-        balance,
-        is_closed: _,
-        close_initiated_at: _,
-        close_initiated_by: _
-    } = tunnel;
-
-    // Send remaining balance to payer or destroy if zero
-    if (refund_amount > 0) {
-        transfer::public_transfer(coin::from_balance(balance, ctx), payer);
+    // Distribute referrer fee
+    if (option::is_some(&referrer)) {
+        let referrer_addr = *option::borrow(&referrer);
+        let referrer_coin = coin::from_balance(
+            balance::split(&mut claimed_balance, referrer_fee),
+            ctx,
+        );
+        transfer::public_transfer(referrer_coin, referrer_addr);
     } else {
-        balance::destroy_zero(balance);
+        // No referrer: fee_receiver gets the referrer fee
+        let extra_coin = coin::from_balance(
+            balance::split(&mut claimed_balance, referrer_fee),
+            ctx,
+        );
+        transfer::public_transfer(extra_coin, fee_receiver);
     };
 
-    // Delete the tunnel object
-    object::delete(id);
+    // Distribute platform fee
+    let platform_coin = coin::from_balance(claimed_balance, ctx);
+    transfer::public_transfer(platform_coin, platform_address);
+
+    // Create and transfer receipt that can be used to close tunnel
+    let receipt = ClaimReceipt {
+        tunnel_id: object::uid_to_inner(&tunnel.id),
+    };
+    receipt
 }
 
 /// Initiate tunnel closure (starts 60-minute grace period)
@@ -297,11 +368,7 @@ public entry fun claim<T>(
 /// * `tunnel` - Tunnel object
 /// * `clock` - Sui clock for timestamp
 /// * `ctx` - Transaction context
-public entry fun init_close<T>(
-    tunnel: &mut Tunnel<T>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
+public fun init_close<T>(tunnel: &mut Tunnel<T>, clock: &Clock, ctx: &mut TxContext) {
     // Only payer can initiate close
     assert!(ctx.sender() == tunnel.payer, E_NOT_AUTHORIZED);
     assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
@@ -323,70 +390,52 @@ public entry fun init_close<T>(
 /// * `tunnel` - Tunnel object
 /// * `clock` - Sui clock for timestamp
 /// * `ctx` - Transaction context
-public entry fun finalize_close<T>(
-    tunnel: Tunnel<T>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
+public fun finalize_close<T>(tunnel: Tunnel<T>, clock: &Clock, ctx: &mut TxContext) {
     assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
     assert!(option::is_some(&tunnel.close_initiated_at), E_CLOSE_NOT_INITIATED);
 
     let initiated_at = *option::borrow(&tunnel.close_initiated_at);
     let current_time = clock::timestamp_ms(clock);
 
-    // Check if grace period has elapsed
-    assert!(current_time >= initiated_at + GRACE_PERIOD_MS, E_GRACE_PERIOD_NOT_ELAPSED);
+    // Check if grace period has elapsed (using tunnel's configurable grace period)
+    assert!(current_time >= initiated_at + tunnel.grace_period_ms, E_GRACE_PERIOD_NOT_ELAPSED);
 
-    // Calculate final payouts - remaining balance goes to payer, claimed goes to creator
+    // Calculate refund - remaining balance goes to payer
     let payer_refund = tunnel.total_deposit - tunnel.claimed_amount;
-    let creator_payout = 0; // Creator already claimed their share
 
-    // Close tunnel and distribute funds
-    close_tunnel_and_distribute(
+    // Close tunnel and refund to payer
+    close_tunnel_and_refund(
         tunnel,
         payer_refund,
-        creator_payout,
         ctx.sender(),
         ctx,
     );
 }
 
-/// Close tunnel immediately with creator's signature
+/// Close tunnel after claiming with ClaimReceipt
 ///
-/// Message format: tunnel_id || payer_refund || creator_payout || nonce
+/// Creator/operator can close tunnel after claiming by providing the ClaimReceipt
+/// returned from claim(). Remaining balance is refunded to payer.
 ///
 /// # Arguments
-/// * `tunnel` - Tunnel object
-/// * `payer_refund` - Amount to refund to payer
-/// * `creator_payout` - Amount to pay to creator
-/// * `nonce` - Unique nonce
-/// * `creator_signature` - Creator's signature
+/// * `tunnel` - Tunnel object (will be deleted)
+/// * `receipt` - ClaimReceipt returned from claim()
 /// * `ctx` - Transaction context
-public entry fun close_with_signature<T>(
-    tunnel: Tunnel<T>,
-    payer_refund: u64,
-    creator_payout: u64,
-    nonce: u64,
-    creator_signature: vector<u8>,
-    ctx: &mut TxContext,
-) {
+public fun close_with_receipt<T>(tunnel: Tunnel<T>, receipt: ClaimReceipt, ctx: &mut TxContext) {
+    // Verify receipt matches tunnel
+    assert!(receipt.tunnel_id == object::uid_to_inner(&tunnel.id), E_INVALID_AMOUNT);
     assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
 
-    // Validate balance conservation - must account for already claimed amounts
-    assert!(payer_refund + creator_payout + tunnel.claimed_amount == tunnel.total_deposit, E_INVALID_AMOUNT);
+    // Delete the receipt object
+    let ClaimReceipt { tunnel_id: _ } = receipt;
 
-    // Construct message: tunnel_id || payer_refund || creator_payout || nonce
-    let tunnel_id = object::uid_to_bytes(&tunnel.id);
-    let message = construct_close_message(&tunnel_id, payer_refund, creator_payout, nonce);
+    // Remaining balance goes to payer
+    let payer_refund = balance::value(&tunnel.balance);
 
-    // Verify creator's signature
-    verify_ed25519_signature(&creator_signature, &tunnel.creator_public_key, &message);
-
-    // Close tunnel and distribute funds
-    close_tunnel_and_distribute(
+    // Close tunnel and refund remaining to payer (no fee distribution)
+    close_tunnel_and_refund(
         tunnel,
         payer_refund,
-        creator_payout,
         ctx.sender(),
         ctx,
     );
@@ -397,29 +446,10 @@ public entry fun close_with_signature<T>(
 // ============================================================================
 
 /// Construct claim message: tunnel_id || amount || nonce
-fun construct_claim_message(
-    tunnel_id: &vector<u8>,
-    amount: u64,
-    nonce: u64,
-): vector<u8> {
+fun construct_claim_message(tunnel_id: &vector<u8>, amount: u64, nonce: u64): vector<u8> {
     let mut message = vector::empty<u8>();
     vector::append(&mut message, *tunnel_id);
     vector::append(&mut message, bcs::to_bytes(&amount));
-    vector::append(&mut message, bcs::to_bytes(&nonce));
-    message
-}
-
-/// Construct close message: tunnel_id || payer_refund || creator_payout || nonce
-fun construct_close_message(
-    tunnel_id: &vector<u8>,
-    payer_refund: u64,
-    creator_payout: u64,
-    nonce: u64,
-): vector<u8> {
-    let mut message = vector::empty<u8>();
-    vector::append(&mut message, *tunnel_id);
-    vector::append(&mut message, bcs::to_bytes(&payer_refund));
-    vector::append(&mut message, bcs::to_bytes(&creator_payout));
     vector::append(&mut message, bcs::to_bytes(&nonce));
     message
 }
@@ -437,58 +467,43 @@ fun verify_ed25519_signature(
     assert!(valid, E_INVALID_SIGNATURE);
 }
 
-/// Close tunnel and distribute funds
-fun close_tunnel_and_distribute<T>(
-    mut tunnel: Tunnel<T>,
+/// Close tunnel and distribute funds with fee splits
+/// Close tunnel and refund remaining balance to payer
+/// Fees are NOT distributed here - they are handled in claim()
+fun close_tunnel_and_refund<T>(
+    tunnel: Tunnel<T>,
     payer_refund: u64,
-    creator_payout: u64,
     closed_by: address,
     ctx: &mut TxContext,
 ) {
-    tunnel.is_closed = true;
-
     let payer = tunnel.payer;
     let creator = tunnel.creator;
     let tunnel_id = object::id(&tunnel);
 
-    // Split funds
-    let payer_coin = if (payer_refund > 0) {
-        coin::from_balance(balance::split(&mut tunnel.balance, payer_refund), ctx)
-    } else {
-        coin::zero<T>(ctx)
-    };
-
-    let creator_coin = if (creator_payout > 0) {
-        coin::from_balance(balance::split(&mut tunnel.balance, creator_payout), ctx)
-    } else {
-        coin::zero<T>(ctx)
-    };
-
+    // Emit close event
     sui::event::emit(TunnelClosed {
         tunnel_id,
         payer,
         creator,
         payer_refund,
-        creator_payout,
+        creator_payout: 0, // No payout on close - fees already distributed via claim()
         closed_by,
     });
 
-    // Destroy tunnel
-    destroy_tunnel(tunnel);
-
-    // Transfer coins
-    transfer::public_transfer(payer_coin, payer);
-    transfer::public_transfer(creator_coin, creator);
-}
-
-/// Destroy tunnel object
-fun destroy_tunnel<T>(tunnel: Tunnel<T>) {
+    // Destroy tunnel and extract remaining balance
     let Tunnel {
         id,
         payer: _,
         creator: _,
+        operator: _,
+        fee_receiver: _,
+        referrer: _,
         payer_public_key: _,
         creator_public_key: _,
+        referrer_fee_bps: _,
+        platform_fee_bps: _,
+        platform_address: _,
+        grace_period_ms: _,
         total_deposit: _,
         claimed_amount: _,
         balance: remaining_balance,
@@ -497,8 +512,16 @@ fun destroy_tunnel<T>(tunnel: Tunnel<T>) {
         close_initiated_by: _,
     } = tunnel;
 
-    balance::destroy_zero(remaining_balance);
+    // Delete tunnel object
     object::delete(id);
+
+    // Transfer remaining balance to payer
+    if (payer_refund > 0) {
+        let payer_coin = coin::from_balance(remaining_balance, ctx);
+        transfer::public_transfer(payer_coin, payer);
+    } else {
+        balance::destroy_zero(remaining_balance);
+    };
 }
 
 // ============================================================================
@@ -556,14 +579,4 @@ public fun construct_claim_message_test(
     nonce: u64,
 ): vector<u8> {
     construct_claim_message(tunnel_id, amount, nonce)
-}
-
-#[test_only]
-public fun construct_close_message_test(
-    tunnel_id: &vector<u8>,
-    payer_refund: u64,
-    creator_payout: u64,
-    nonce: u64,
-): vector<u8> {
-    construct_close_message(tunnel_id, payer_refund, creator_payout, nonce)
 }
