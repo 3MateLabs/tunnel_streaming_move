@@ -72,6 +72,7 @@ public struct Tunnel<phantom T> has key, store {
     // Public keys
     payer_public_key: vector<u8>,
     creator_public_key: vector<u8>,
+    credential: vector<u8>,
     // Fee configuration (copied from CreatorConfig at tunnel creation)
     referrer_fee_bps: u64,
     platform_fee_bps: u64,
@@ -203,6 +204,7 @@ public fun create_creator_config(
 public fun open_tunnel<T>(
     creator_config: &CreatorConfig,
     payer_public_key: vector<u8>,
+    credential: vector<u8>,
     referrer: address,
     deposit: Coin<T>,
     ctx: &mut TxContext,
@@ -232,6 +234,7 @@ public fun open_tunnel<T>(
         referrer: referrer_opt,
         payer_public_key,
         creator_public_key: creator_config.public_key,
+        credential,
         referrer_fee_bps: creator_config.referrer_fee_bps,
         platform_fee_bps: creator_config.platform_fee_bps,
         platform_address: creator_config.platform_address,
@@ -500,6 +503,7 @@ fun close_tunnel_and_refund<T>(
         referrer: _,
         payer_public_key: _,
         creator_public_key: _,
+        credential: _,
         referrer_fee_bps: _,
         platform_fee_bps: _,
         platform_address: _,
