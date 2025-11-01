@@ -116,6 +116,7 @@ async function audit() {
     arguments: [
       tx2.object(configId!),
       tx2.pure.vector('u8', Array.from(payerPublicKey)),
+      tx2.pure.vector('u8', []),  // credential: empty for tests
       tx2.pure.address('0x0'),
       coin,
     ],
@@ -345,6 +346,7 @@ async function audit() {
       arguments: [
         tx9.object(configId!),
         tx9.pure.vector('u8', Array.from(payerPublicKey)),
+        tx9.pure.vector('u8', []),  // credential: empty for tests
         tx9.pure.address('0x0'),
         coin9,
       ],
@@ -414,6 +416,7 @@ async function audit() {
       arguments: [
         tx12.object(configId!),
         tx12.pure.vector('u8', Array.from(payerPublicKey)),
+        tx12.pure.vector('u8', []),  // credential: empty for tests
         tx12.pure.address('0x0'),
         coin12a,
       ],
@@ -437,6 +440,7 @@ async function audit() {
       arguments: [
         tx13.object(configId!),
         tx13.pure.vector('u8', Array.from(payerPublicKey)),
+        tx13.pure.vector('u8', []),  // credential: empty for tests
         tx13.pure.address('0x0'),
         coin13,
       ],
@@ -508,6 +512,7 @@ async function audit() {
       arguments: [
         tx15.object(configId!),
         tx15.pure.vector('u8', Array.from(payerPublicKey)),
+        tx15.pure.vector('u8', []),  // credential: empty for tests
         tx15.pure.address('0x0'),
         coin15,
       ],
@@ -606,6 +611,7 @@ async function audit() {
       arguments: [
         tx18.object(configId!),
         tx18.pure.vector('u8', Array.from(payerPublicKey)),
+        tx18.pure.vector('u8', []),  // credential: empty for tests
         tx18.pure.address('0x0'),
         coin18,
       ],
@@ -624,7 +630,7 @@ async function audit() {
     const { signature: sig10 } = await signClaimMessage(
       payerKeypair,
       tunnel6Id!,
-      0, // Zero amount
+      BigInt(0), // Zero amount
       BigInt(300)
     );
 
@@ -665,6 +671,7 @@ async function audit() {
       arguments: [
         tx20.object(configId!),
         tx20.pure.vector('u8', Array.from(payerPublicKey)),
+        tx20.pure.vector('u8', []),  // credential: empty for tests
         tx20.pure.address('0x0'),
         coin20,
       ],
@@ -716,6 +723,7 @@ async function audit() {
       arguments: [
         tx22.object(configId!),
         tx22.pure.vector('u8', Array.from(payerPublicKey)),
+        tx22.pure.vector('u8', []),  // credential: empty for tests
         tx22.pure.address('0x0'),
         coin22,
       ],
@@ -800,6 +808,7 @@ async function audit() {
       arguments: [
         tx25.object(configId!),
         tx25.pure.vector('u8', Array.from(payerPublicKey)),
+        tx25.pure.vector('u8', []),  // credential: empty for tests
         tx25.pure.address('0x0'),
         zeroCoin,
       ],

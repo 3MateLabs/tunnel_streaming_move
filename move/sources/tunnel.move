@@ -33,6 +33,7 @@ const E_CLOSE_NOT_INITIATED: u64 = 6;
 const E_GRACE_PERIOD_NOT_ELAPSED: u64 = 7;
 const E_INVALID_AMOUNT: u64 = 8;
 const E_INVALID_FEE_PERCENTAGE: u64 = 9;
+const E_INVALID_TUNNEL_ID: u64 = 10;
 
 /// Basis points for percentage calculations (10000 = 100%)
 const BASIS_POINTS: u64 = 10000;
@@ -365,6 +366,35 @@ public fun claim<T>(
     receipt
 }
 
+/// Close tunnel after claiming with ClaimReceipt
+///
+/// Creator/operator can close tunnel after claiming by providing the ClaimReceipt
+/// returned from claim(). Remaining balance is refunded to payer.
+///
+/// # Arguments
+/// * `tunnel` - Tunnel object (will be deleted)
+/// * `receipt` - ClaimReceipt returned from claim()
+/// * `ctx` - Transaction context
+public fun close_with_receipt<T>(tunnel: Tunnel<T>, receipt: ClaimReceipt, ctx: &mut TxContext) {
+    // Verify receipt matches tunnel
+    assert!(receipt.tunnel_id == object::uid_to_inner(&tunnel.id), E_INVALID_TUNNEL_ID);
+    assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
+
+    // Delete the receipt object
+    let ClaimReceipt { tunnel_id: _ } = receipt;
+
+    // Remaining balance goes to payer
+    let payer_refund = balance::value(&tunnel.balance);
+
+    // Close tunnel and refund remaining to payer (no fee distribution)
+    close_tunnel_and_refund(
+        tunnel,
+        payer_refund,
+        ctx.sender(),
+        ctx,
+    );
+}
+
 /// Initiate tunnel closure (starts 60-minute grace period)
 ///
 /// # Arguments
@@ -407,35 +437,6 @@ public fun finalize_close<T>(tunnel: Tunnel<T>, clock: &Clock, ctx: &mut TxConte
     let payer_refund = tunnel.total_deposit - tunnel.claimed_amount;
 
     // Close tunnel and refund to payer
-    close_tunnel_and_refund(
-        tunnel,
-        payer_refund,
-        ctx.sender(),
-        ctx,
-    );
-}
-
-/// Close tunnel after claiming with ClaimReceipt
-///
-/// Creator/operator can close tunnel after claiming by providing the ClaimReceipt
-/// returned from claim(). Remaining balance is refunded to payer.
-///
-/// # Arguments
-/// * `tunnel` - Tunnel object (will be deleted)
-/// * `receipt` - ClaimReceipt returned from claim()
-/// * `ctx` - Transaction context
-public fun close_with_receipt<T>(tunnel: Tunnel<T>, receipt: ClaimReceipt, ctx: &mut TxContext) {
-    // Verify receipt matches tunnel
-    assert!(receipt.tunnel_id == object::uid_to_inner(&tunnel.id), E_INVALID_AMOUNT);
-    assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
-
-    // Delete the receipt object
-    let ClaimReceipt { tunnel_id: _ } = receipt;
-
-    // Remaining balance goes to payer
-    let payer_refund = balance::value(&tunnel.balance);
-
-    // Close tunnel and refund remaining to payer (no fee distribution)
     close_tunnel_and_refund(
         tunnel,
         payer_refund,

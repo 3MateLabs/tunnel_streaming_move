@@ -150,6 +150,7 @@ async function test() {
     arguments: [
       tx2.object(creatorConfig.objectId),
       tx2.pure.vector('u8', Array.from(payerPublicKey)),
+      tx2.pure.vector('u8', []),  // credential: empty for tests
       tx2.pure.address('0x0'),  // referrer: no referrer for this test
       coin,
     ],
@@ -364,6 +365,7 @@ async function test() {
     arguments: [
       tx6.object(shortGraceConfig.objectId),
       tx6.pure.vector('u8', Array.from(payerPublicKey)),
+      tx6.pure.vector('u8', []),  // credential: empty for tests
       tx6.pure.address('0x0'),
       coin6,
     ],

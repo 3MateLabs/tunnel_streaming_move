@@ -84,6 +84,7 @@ async function testMultipleClaims() {
     arguments: [
       tx2.object(configId!),
       tx2.pure.vector('u8', Array.from(payerPublicKey)),
+      tx2.pure.vector('u8', []),  // credential: empty for tests
       tx2.pure.address('0x0'),
       coin,
     ],
@@ -119,7 +120,8 @@ async function testMultipleClaims() {
     console.log(`   Total deposit: ${mistToSui(totalDeposit)} SUI`);
     console.log(`   Claimed so far: ${mistToSui(claimedAmount)} SUI`);
     console.log(`   Remaining balance: ${mistToSui(balance)} SUI`);
-    console.log(`   Available to claim: ${mistToSui(totalDeposit - claimedAmount)} SUI\n`);
+    const availableToClaim = BigInt(totalDeposit) - BigInt(claimedAmount);
+    console.log(`   Available to claim: ${mistToSui(availableToClaim.toString())} SUI\n`);
 
     return { balance, claimedAmount, totalDeposit };
   }

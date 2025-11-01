@@ -1,8 +1,8 @@
 # Security Audit Report: Tunnel Smart Contract
 
-**Date:** 2025-01-27
+**Date:** 2025-11-01
 **Contract:** `tunnel::tunnel`
-**Package ID:** `0xd67baa06c5d21080f0f1cb6255258cc029f8934df8e08962d92d53450d1142b4`
+**Package ID:** `0xaf5acbe446f178c337c506197ace20b72a8b357b15d72041cec582455745d162`
 **Network:** Sui Testnet
 **Status:** ✅ ALL TESTS PASSED
 
@@ -175,7 +175,7 @@ assert!(current_time >= initiated_at + tunnel.grace_period_ms, E_GRACE_PERIOD_NO
 
 **Result:** ✅ BLOCKED
 - Receipt contains tunnel_id that must match
-- Error: `E_INVALID_AMOUNT (8)`
+- Error: `E_INVALID_TUNNEL_ID (10)`
 
 **Protection Mechanism:**
 ```move
@@ -184,7 +184,7 @@ public struct ClaimReceipt has drop {
 }
 
 // In close_with_receipt:
-assert!(receipt.tunnel_id == object::uid_to_inner(&tunnel.id), E_INVALID_AMOUNT);
+assert!(receipt.tunnel_id == object::uid_to_inner(&tunnel.id), E_INVALID_TUNNEL_ID);
 ```
 
 ---
@@ -412,7 +412,7 @@ tsx src/audit-double-close.ts    # Double close analysis
 - **Audit Script:** `scripts/src/audit.ts`
 - **Detailed Tests:** `scripts/src/audit-detailed.ts`, `scripts/src/audit-double-close.ts`
 - **Test Network:** Sui Testnet
-- **Package:** `0xd67baa06c5d21080f0f1cb6255258cc029f8934df8e08962d92d53450d1142b4`
+- **Package:** `0xaf5acbe446f178c337c506197ace20b72a8b357b15d72041cec582455745d162`
 
 ---
 
