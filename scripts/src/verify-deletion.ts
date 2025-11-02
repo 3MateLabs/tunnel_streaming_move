@@ -43,16 +43,56 @@ async function verifyDeletion() {
   console.log('📝 Step 1: Creating creator config...');
   const creatorAddress = creatorKeypair.toSuiAddress();
   const tx1 = new Transaction();
+
+  // Create receiver configs: CreatorA 50%, CreatorB 10%, Referrer 30%, Platform 10%
+  const creatorAConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+      tx1.pure.address(creatorAddress),
+      tx1.pure.u64(4500),  // 45%
+    ],
+  });
+
+  const creatorBConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+      tx1.pure.address(creatorAddress),
+      tx1.pure.u64(900),  // 9%
+    ],
+  });
+
+  const referrerConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4022),  // RECEIVER_TYPE_REFERER_ADDRESS
+      tx1.pure.address('0x0'),
+      tx1.pure.u64(2700),  // 27%
+    ],
+  });
+
+  const platformConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4021),  // Platform type
+      tx1.pure.address(creatorAddress),
+      tx1.pure.u64(900),  // 9%
+    ],
+  });
+
+  const receiverConfigs = tx1.makeMoveVec({
+    type: `${packageId}::tunnel::ReceiverConfig`,
+    elements: [creatorAConfig, creatorBConfig, referrerConfig, platformConfig],
+  });
+
   tx1.moveCall({
     target: `${packageId}::tunnel::create_creator_config`,
     arguments: [
       tx1.pure.address(creatorAddress),  // operator (creator is operator)
-      tx1.pure.address(creatorAddress),  // fee_receiver (fees go to creator)
       tx1.pure.vector('u8', Array.from(creatorPublicKey)),
       tx1.pure.string('Deletion test config'),
-      tx1.pure.u64(500),   // referrer_fee_bps: 5%
-      tx1.pure.u64(200),   // platform_fee_bps: 2%
-      tx1.pure.address(creatorAddress),  // platform_address
+      receiverConfigs,
       tx1.pure.u64(1000),  // grace_period_ms: 1 second (for quick testing)
     ],
   });

@@ -80,16 +80,56 @@ async function audit() {
   console.log('📝 Setup: Creating config and tunnel...\n');
 
   const tx1 = new Transaction();
+
+  // Create receiver configs: CreatorA 50%, CreatorB 10%, Referrer 30%, Platform 10%
+  const creatorAConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+      tx1.pure.address(creatorAddress),
+      tx1.pure.u64(4500),  // 45%
+    ],
+  });
+
+  const creatorBConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+      tx1.pure.address(creatorAddress),
+      tx1.pure.u64(900),  // 9%
+    ],
+  });
+
+  const referrerConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4022),  // RECEIVER_TYPE_REFERER_ADDRESS
+      tx1.pure.address('0x0'),
+      tx1.pure.u64(2700),  // 27%
+    ],
+  });
+
+  const platformConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4021),  // Platform type
+      tx1.pure.address(creatorAddress),
+      tx1.pure.u64(900),  // 9%
+    ],
+  });
+
+  const receiverConfigs = tx1.makeMoveVec({
+    type: `${packageId}::tunnel::ReceiverConfig`,
+    elements: [creatorAConfig, creatorBConfig, referrerConfig, platformConfig],
+  });
+
   tx1.moveCall({
     target: `${packageId}::tunnel::create_creator_config`,
     arguments: [
       tx1.pure.address(creatorAddress),
-      tx1.pure.address(creatorAddress),
       tx1.pure.vector('u8', Array.from(creatorPublicKey)),
       tx1.pure.string('Audit test config'),
-      tx1.pure.u64(500),
-      tx1.pure.u64(200),
-      tx1.pure.address(creatorAddress),
+      receiverConfigs,
       tx1.pure.u64(1000),  // 1 second grace period
     ],
   });
@@ -767,18 +807,49 @@ async function audit() {
   console.log('🔐 TEST 12: Test Fee Calculation with Maximum Values\n');
 
   try {
-    // Create config with max fee percentages
+    // Create config with max fee percentages (should fail - total = 100%)
     const tx24 = new Transaction();
+
+    // Create receiver configs with total = 100% (should fail validation)
+    const receiverConfig1 = tx24.moveCall({
+      target: `${packageId}::tunnel::create_receiver_config`,
+      arguments: [
+        tx24.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+        tx24.pure.address(creatorAddress),
+        tx24.pure.u64(5000),  // 50%
+      ],
+    });
+
+    const receiverConfig2 = tx24.moveCall({
+      target: `${packageId}::tunnel::create_receiver_config`,
+      arguments: [
+        tx24.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+        tx24.pure.address(creatorAddress),
+        tx24.pure.u64(3000),  // 30%
+      ],
+    });
+
+    const receiverConfig3 = tx24.moveCall({
+      target: `${packageId}::tunnel::create_receiver_config`,
+      arguments: [
+        tx24.pure.u64(4021),  // Platform type
+        tx24.pure.address(creatorAddress),
+        tx24.pure.u64(2000),  // 20% (total = 100%, should fail)
+      ],
+    });
+
+    const receiverConfigs24 = tx24.makeMoveVec({
+      type: `${packageId}::tunnel::ReceiverConfig`,
+      elements: [receiverConfig1, receiverConfig2, receiverConfig3],
+    });
+
     tx24.moveCall({
       target: `${packageId}::tunnel::create_creator_config`,
       arguments: [
         tx24.pure.address(creatorAddress),
-        tx24.pure.address(creatorAddress),
         tx24.pure.vector('u8', Array.from(creatorPublicKey)),
         tx24.pure.string('Max fee config'),
-        tx24.pure.u64(9000),  // 90% referrer fee
-        tx24.pure.u64(1000),  // 10% platform fee (total > 100%)
-        tx24.pure.address(creatorAddress),
+        receiverConfigs24,
         tx24.pure.u64(1000),
       ],
     });

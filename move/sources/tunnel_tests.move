@@ -92,3 +92,25 @@ fun test_different_tunnel_ids() {
     // Different tunnel IDs should produce different messages
     assert!(msg1 != msg2, 0);
 }
+
+/// Test: Receiver config creation
+#[test]
+fun test_create_receiver_config() {
+    let _config = tunnel::create_receiver_config(
+        4020,  // RECEIVER_TYPE_CREATOR_ADDRESS
+        @0x123,
+        5000   // 50%
+    );
+
+    // Config should be created successfully
+    // (No assertion needed - successful creation validates the function)
+}
+
+// Note: Comprehensive fee distribution tests with exact amount verification
+// are in the TypeScript integration tests (scripts/src/test.ts) because they require:
+// 1. Valid Ed25519 signatures from payer
+// 2. Shared object handling
+// 3. Balance verification across multiple addresses
+// 4. Test scenarios: CreatorA 50%, CreatorB 10%, Referrer 30%, Platform 10%
+//    - With referrer: exact percentages distributed
+//    - Without referrer (0x0): referrer's 30% split evenly to creators (CreatorA +15%, CreatorB +15%)

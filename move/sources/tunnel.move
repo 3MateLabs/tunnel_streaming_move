@@ -38,6 +38,16 @@ const E_INVALID_TUNNEL_ID: u64 = 10;
 /// Basis points for percentage calculations (10000 = 100%)
 const BASIS_POINTS: u64 = 10000;
 
+/// Receiver type constants (for use in TypeScript when constructing ReceiverConfig)
+const RECEIVER_TYPE_CREATOR_ADDRESS: u64 = 4020;
+const RECEIVER_TYPE_REFERER_ADDRESS: u64 = 4022;
+
+public struct ReceiverConfig has copy, drop, store {
+    _type: u64,
+    fee_bps: u64,
+    _address: address,
+}
+
 /// Shared object: Creator's configuration
 public struct CreatorConfig has key, store {
     id: UID,
@@ -46,17 +56,11 @@ public struct CreatorConfig has key, store {
     /// Operator address (can claim fees and close tunnels on behalf of creator)
     operator: address,
     /// Fee receiver address (where creator's fees are sent)
-    fee_receiver: address,
+    receiver_configs: vector<ReceiverConfig>,
     /// Creator's Ed25519 public key (32 bytes)
     public_key: vector<u8>,
     /// Optional metadata (e.g., creator name, description)
     metadata: String,
-    /// Referrer fee percentage in basis points (e.g., 500 = 5%)
-    referrer_fee_bps: u64,
-    /// Platform fee percentage in basis points (e.g., 200 = 2%)
-    platform_fee_bps: u64,
-    /// Platform address to receive platform fees
-    platform_address: address,
     /// Grace period for tunnel closure in milliseconds (e.g., 3600000 = 60 minutes, 1000 = 1 second)
     grace_period_ms: u64,
 }
@@ -68,16 +72,11 @@ public struct Tunnel<phantom T> has key, store {
     payer: address,
     creator: address,
     operator: address, // Operator who can claim fees and close tunnels
-    fee_receiver: address, // Address where creator's fees are sent
-    referrer: Option<address>, // Optional referrer who gets a fee
+    receiver_configs: vector<ReceiverConfig>,
     // Public keys
     payer_public_key: vector<u8>,
     creator_public_key: vector<u8>,
     credential: vector<u8>,
-    // Fee configuration (copied from CreatorConfig at tunnel creation)
-    referrer_fee_bps: u64,
-    platform_fee_bps: u64,
-    platform_address: address,
     grace_period_ms: u64, // Grace period in milliseconds
     // Balances
     total_deposit: u64,
@@ -139,23 +138,40 @@ public struct TunnelClosed has copy, drop {
 // Creator Configuration Functions
 // ============================================================================
 
+/// Create a receiver configuration
+///
+/// # Arguments
+/// * `receiver_type` - Receiver type
+/// * `receiver_address` - Receiver address
+/// * `fee_bps` - Fee in basis points (e.g., 500 = 5%)
+public fun create_receiver_config(
+    receiver_type: u64,
+    receiver_address: address,
+    fee_bps: u64,
+): ReceiverConfig {
+    ReceiverConfig {
+        _type: receiver_type,
+        fee_bps,
+        _address: receiver_address,
+    }
+}
+
 /// Create a creator configuration
 ///
 /// # Arguments
+/// * `operator` - Operator address (can claim on behalf of creator)
 /// * `public_key` - Creator's Ed25519 public key (32 bytes)
 /// * `metadata` - Optional metadata (e.g., creator name, description)
-/// * `referrer_fee_bps` - Referrer fee in basis points (e.g., 500 = 5%)
-/// * `platform_fee_bps` - Platform fee in basis points (e.g., 200 = 2%)
-/// * `platform_address` - Platform address to receive fees
+/// * `receiver_configs` - Vector of receiver configurations for fee distribution
+/// * `grace_period_ms` - Grace period for tunnel closure in milliseconds
 /// * `ctx` - Transaction context
+///
+/// Note: Creator is automatically set to the transaction sender (ctx.sender())
 public fun create_creator_config(
     operator: address,
-    fee_receiver: address,
     public_key: vector<u8>,
     metadata: String,
-    referrer_fee_bps: u64,
-    platform_fee_bps: u64,
-    platform_address: address,
+    receiver_configs: vector<ReceiverConfig>,
     grace_period_ms: u64,
     ctx: &mut TxContext,
 ) {
@@ -163,19 +179,21 @@ public fun create_creator_config(
     assert!(vector::length(&public_key) == 32, E_INVALID_PUBLIC_KEY);
 
     // Validate fee percentages don't exceed 100%
-    assert!(referrer_fee_bps + platform_fee_bps < BASIS_POINTS, E_INVALID_FEE_PERCENTAGE);
+    let total_fee_bps = vector::fold!(
+        receiver_configs,
+        0,
+        |acc, receiver_config| acc + receiver_config.fee_bps,
+    );
+    assert!(total_fee_bps < BASIS_POINTS, E_INVALID_FEE_PERCENTAGE);
 
     let creator = ctx.sender();
     let config = CreatorConfig {
         id: object::new(ctx),
         creator,
         operator,
-        fee_receiver,
+        receiver_configs,
         public_key,
         metadata,
-        referrer_fee_bps,
-        platform_fee_bps,
-        platform_address,
         grace_period_ms,
     };
 
@@ -199,7 +217,8 @@ public fun create_creator_config(
 /// # Arguments
 /// * `creator_config` - Creator's configuration (shared object reference)
 /// * `payer_public_key` - Payer's Ed25519 public key (32 bytes)
-/// * `referrer` - Optional referrer address (use 0x0 for none)
+/// * `credential` - Optional credential data
+/// * `referrer` - Referrer address (use 0x0 for none)
 /// * `deposit` - Payer's deposit
 /// * `ctx` - Transaction context
 public fun open_tunnel<T>(
@@ -219,11 +238,18 @@ public fun open_tunnel<T>(
     let total_deposit = coin::value(&deposit);
     assert!(total_deposit > 0, E_INVALID_AMOUNT);
 
-    // Set referrer as option (0x0 means none)
-    let referrer_opt = if (referrer == @0x0) {
-        option::none()
-    } else {
-        option::some(referrer)
+    // Copy receiver configs and update referrer address if provided
+    let mut receiver_configs = creator_config.receiver_configs;
+    let mut i = 0;
+    let len = vector::length(&receiver_configs);
+
+    while (i < len) {
+        let receiver = vector::borrow_mut(&mut receiver_configs, i);
+        // If this is a referrer type receiver, update the address
+        if (receiver._type == RECEIVER_TYPE_REFERER_ADDRESS) {
+            receiver._address = referrer;
+        };
+        i = i + 1;
     };
 
     let tunnel = Tunnel {
@@ -231,14 +257,10 @@ public fun open_tunnel<T>(
         payer,
         creator,
         operator: creator_config.operator,
-        fee_receiver: creator_config.fee_receiver,
-        referrer: referrer_opt,
+        receiver_configs,
         payer_public_key,
         creator_public_key: creator_config.public_key,
         credential,
-        referrer_fee_bps: creator_config.referrer_fee_bps,
-        platform_fee_bps: creator_config.platform_fee_bps,
-        platform_address: creator_config.platform_address,
         grace_period_ms: creator_config.grace_period_ms,
         total_deposit,
         claimed_amount: 0,
@@ -260,6 +282,106 @@ public fun open_tunnel<T>(
     transfer::share_object(tunnel);
 }
 
+/// Internal claim logic shared by claim() and claim_for_testing()
+/// Performs validation, fee distribution, and returns ClaimReceipt
+fun claim_internal<T>(
+    tunnel: &mut Tunnel<T>,
+    cumulative_amount: u64,
+    sender: address,
+    ctx: &mut TxContext,
+): ClaimReceipt {
+    // Only creator or operator can claim
+    assert!(sender == tunnel.creator || sender == tunnel.operator, E_NOT_AUTHORIZED);
+    assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
+
+    // Cumulative amount must be greater than already claimed amount
+    assert!(cumulative_amount > tunnel.claimed_amount, E_INVALID_AMOUNT);
+
+    // Check sufficient balance for the increment
+    assert!(cumulative_amount <= tunnel.total_deposit, E_INSUFFICIENT_BALANCE);
+
+    // Calculate increment (actual amount to claim this time)
+    let claim_increment = cumulative_amount - tunnel.claimed_amount;
+
+    // Update claimed amount to new cumulative total
+    tunnel.claimed_amount = cumulative_amount;
+
+    // Emit claim event
+    sui::event::emit(FundsClaimed {
+        tunnel_id: object::uid_to_inner(&tunnel.id),
+        amount: claim_increment,
+        total_claimed: tunnel.claimed_amount,
+        claimed_by: sender,
+    });
+
+    // Split claimed increment from balance
+    let mut claimed_balance = balance::split(&mut tunnel.balance, claim_increment);
+
+    // First pass: Check for referrer with 0x0 and count creators
+    let receiver_configs = &tunnel.receiver_configs;
+    let len = vector::length(receiver_configs);
+    let mut has_empty_referrer = false;
+    let mut referrer_fee_bps = 0u64;
+    let mut creator_count = 0u64;
+    let mut i = 0;
+
+    while (i < len) {
+        let receiver_config = vector::borrow(receiver_configs, i);
+        if (receiver_config._type == RECEIVER_TYPE_REFERER_ADDRESS && receiver_config._address == @0x0) {
+            has_empty_referrer = true;
+            referrer_fee_bps = receiver_config.fee_bps;
+        };
+        if (receiver_config._type == RECEIVER_TYPE_CREATOR_ADDRESS) {
+            creator_count = creator_count + 1;
+        };
+        i = i + 1;
+    };
+
+    // Second pass: Distribute fees
+    i = 0;
+    while (i < len) {
+        let receiver_config = vector::borrow(receiver_configs, i);
+
+        // Skip referrer with 0x0 address (will be distributed to creators)
+        if (receiver_config._type == RECEIVER_TYPE_REFERER_ADDRESS && receiver_config._address == @0x0) {
+            i = i + 1;
+            continue
+        };
+
+        let mut fee_amount = (claim_increment * receiver_config.fee_bps) / BASIS_POINTS;
+
+        // If this is a creator and we have empty referrer, add their share of referrer fee
+        if (has_empty_referrer && receiver_config._type == RECEIVER_TYPE_CREATOR_ADDRESS && creator_count > 0) {
+            let referrer_share = (claim_increment * referrer_fee_bps) / BASIS_POINTS / creator_count;
+            fee_amount = fee_amount + referrer_share;
+        };
+
+        if (fee_amount > 0) {
+            let receiver_coin = coin::from_balance(
+                balance::split(&mut claimed_balance, fee_amount),
+                ctx,
+            );
+            transfer::public_transfer(receiver_coin, receiver_config._address);
+        };
+
+        i = i + 1;
+    };
+
+    // Transfer remaining balance (after all fees) to creator/operator who called claim
+    let remaining = balance::value(&claimed_balance);
+    if (remaining > 0) {
+        let remaining_coin = coin::from_balance(claimed_balance, ctx);
+        transfer::public_transfer(remaining_coin, sender);
+    } else {
+        balance::destroy_zero(claimed_balance);
+    };
+
+    // Create and return receipt
+    ClaimReceipt {
+        tunnel_id: object::uid_to_inner(&tunnel.id),
+    }
+}
+
 /// Claim funds from tunnel using payer's cumulative signature
 ///
 /// IMPORTANT: Amount is CUMULATIVE (total authorized up to now), not incremental.
@@ -277,6 +399,7 @@ public fun open_tunnel<T>(
 /// * `nonce` - Unique nonce to prevent replay
 /// * `payer_signature` - Payer's signature on (tunnel_id || cumulative_amount || nonce)
 /// * `ctx` - Transaction context
+#[allow(lint(self_transfer))]
 public fun claim<T>(
     tunnel: &mut Tunnel<T>,
     cumulative_amount: u64,
@@ -284,17 +407,6 @@ public fun claim<T>(
     payer_signature: vector<u8>,
     ctx: &mut TxContext,
 ): ClaimReceipt {
-    // Only creator or operator can claim
-    let sender = ctx.sender();
-    assert!(sender == tunnel.creator || sender == tunnel.operator, E_NOT_AUTHORIZED);
-    assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
-
-    // Cumulative amount must be greater than already claimed amount
-    assert!(cumulative_amount > tunnel.claimed_amount, E_INVALID_AMOUNT);
-
-    // Check sufficient balance for the increment
-    assert!(cumulative_amount <= tunnel.total_deposit, E_INSUFFICIENT_BALANCE);
-
     // Construct message: tunnel_id || cumulative_amount || nonce
     let tunnel_id_bytes = object::uid_to_bytes(&tunnel.id);
     let message = construct_claim_message(&tunnel_id_bytes, cumulative_amount, nonce);
@@ -302,68 +414,8 @@ public fun claim<T>(
     // Verify payer's signature
     verify_ed25519_signature(&payer_signature, &tunnel.payer_public_key, &message);
 
-    // Calculate increment (actual amount to claim this time)
-    let claim_increment = cumulative_amount - tunnel.claimed_amount;
-
-    // Store addresses and fee config
-    let fee_receiver = tunnel.fee_receiver;
-    let referrer = tunnel.referrer;
-    let referrer_fee_bps = tunnel.referrer_fee_bps;
-    let platform_fee_bps = tunnel.platform_fee_bps;
-    let platform_address = tunnel.platform_address;
-
-    // Update claimed amount to new cumulative total
-    tunnel.claimed_amount = cumulative_amount;
-
-    // Emit claim event
-    sui::event::emit(FundsClaimed {
-        tunnel_id: object::uid_to_inner(&tunnel.id),
-        amount: claim_increment,
-        total_claimed: tunnel.claimed_amount,
-        claimed_by: sender,
-    });
-
-    // Calculate fees on the increment
-    let referrer_fee = (claim_increment * referrer_fee_bps) / BASIS_POINTS;
-    let platform_fee = (claim_increment * platform_fee_bps) / BASIS_POINTS;
-    let fee_receiver_amount = claim_increment - referrer_fee - platform_fee;
-
-    // Split and distribute claimed increment
-    let mut claimed_balance = balance::split(&mut tunnel.balance, claim_increment);
-
-    // Distribute to fee_receiver
-    let fee_receiver_coin = coin::from_balance(
-        balance::split(&mut claimed_balance, fee_receiver_amount),
-        ctx,
-    );
-    transfer::public_transfer(fee_receiver_coin, fee_receiver);
-
-    // Distribute referrer fee
-    if (option::is_some(&referrer)) {
-        let referrer_addr = *option::borrow(&referrer);
-        let referrer_coin = coin::from_balance(
-            balance::split(&mut claimed_balance, referrer_fee),
-            ctx,
-        );
-        transfer::public_transfer(referrer_coin, referrer_addr);
-    } else {
-        // No referrer: fee_receiver gets the referrer fee
-        let extra_coin = coin::from_balance(
-            balance::split(&mut claimed_balance, referrer_fee),
-            ctx,
-        );
-        transfer::public_transfer(extra_coin, fee_receiver);
-    };
-
-    // Distribute platform fee
-    let platform_coin = coin::from_balance(claimed_balance, ctx);
-    transfer::public_transfer(platform_coin, platform_address);
-
-    // Create and transfer receipt that can be used to close tunnel
-    let receipt = ClaimReceipt {
-        tunnel_id: object::uid_to_inner(&tunnel.id),
-    };
-    receipt
+    // Perform claim with validated signature
+    claim_internal(tunnel, cumulative_amount, ctx.sender(), ctx)
 }
 
 /// Close tunnel after claiming with ClaimReceipt
@@ -500,14 +552,10 @@ fun close_tunnel_and_refund<T>(
         payer: _,
         creator: _,
         operator: _,
-        fee_receiver: _,
-        referrer: _,
+        receiver_configs: _,
         payer_public_key: _,
         creator_public_key: _,
         credential: _,
-        referrer_fee_bps: _,
-        platform_fee_bps: _,
-        platform_address: _,
         grace_period_ms: _,
         total_deposit: _,
         claimed_amount: _,
@@ -584,4 +632,16 @@ public fun construct_claim_message_test(
     nonce: u64,
 ): vector<u8> {
     construct_claim_message(tunnel_id, amount, nonce)
+}
+
+/// Test-only function to claim without signature verification
+/// Returns ClaimReceipt for testing close flows
+#[test_only]
+public fun claim_for_testing<T>(
+    tunnel: &mut Tunnel<T>,
+    cumulative_amount: u64,
+    ctx: &mut TxContext,
+): ClaimReceipt {
+    // Skip signature verification and directly call internal claim logic
+    claim_internal(tunnel, cumulative_amount, ctx.sender(), ctx)
 }

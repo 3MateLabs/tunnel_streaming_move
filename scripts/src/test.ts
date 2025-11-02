@@ -94,16 +94,57 @@ async function test() {
   console.log('📝 Test 1: Creating Creator Config...');
 
   const tx1 = new Transaction();
+
+  // Create receiver configs for fee distribution (total 90%, leaving 10% for operator)
+  // CreatorA: 45%, CreatorB: 9%, Referrer: 27%, Platform: 9%
+  const creatorAConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+      tx1.pure.address(creatorAddress),
+      tx1.pure.u64(4500),  // 45%
+    ],
+  });
+
+  const creatorBConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+      tx1.pure.address(creatorAddress),  // using same address for testing
+      tx1.pure.u64(900),  // 9%
+    ],
+  });
+
+  const referrerConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4022),  // RECEIVER_TYPE_REFERER_ADDRESS
+      tx1.pure.address('0x0'),  // Will be filled when tunnel opens
+      tx1.pure.u64(2700),  // 27%
+    ],
+  });
+
+  const platformConfig = tx1.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx1.pure.u64(4021),  // Platform type (not a creator or referrer)
+      tx1.pure.address(creatorAddress),  // using creator address for testing
+      tx1.pure.u64(900),  // 9%
+    ],
+  });
+
+  const receiverConfigs = tx1.makeMoveVec({
+    type: `${packageId}::tunnel::ReceiverConfig`,
+    elements: [creatorAConfig, creatorBConfig, referrerConfig, platformConfig],
+  });
+
   tx1.moveCall({
     target: `${packageId}::tunnel::create_creator_config`,
     arguments: [
       tx1.pure.address(creatorAddress),  // operator (creator is operator)
-      tx1.pure.address(creatorAddress),  // fee_receiver (fees go to creator)
       tx1.pure.vector('u8', Array.from(creatorPublicKey)),
       tx1.pure.string('Test creator config'),
-      tx1.pure.u64(500),   // referrer_fee_bps: 5%
-      tx1.pure.u64(200),   // platform_fee_bps: 2%
-      tx1.pure.address(creatorAddress),  // platform_address (using creator for testing)
+      receiverConfigs,
       tx1.pure.u64(3600000),  // grace_period_ms: 60 minutes (for normal tests)
     ],
   });
@@ -321,16 +362,56 @@ async function test() {
   // Create a second config with 1-second grace period for testing
   console.log('Creating config with 1-second grace period...');
   const tx5 = new Transaction();
+
+  // Create receiver configs - same as main config
+  const creatorAConfig5 = tx5.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx5.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+      tx5.pure.address(creatorAddress),
+      tx5.pure.u64(4500),  // 45%
+    ],
+  });
+
+  const creatorBConfig5 = tx5.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx5.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
+      tx5.pure.address(creatorAddress),
+      tx5.pure.u64(900),  // 9%
+    ],
+  });
+
+  const referrerConfig5 = tx5.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx5.pure.u64(4022),  // RECEIVER_TYPE_REFERER_ADDRESS
+      tx5.pure.address('0x0'),
+      tx5.pure.u64(2700),  // 27%
+    ],
+  });
+
+  const platformConfig5 = tx5.moveCall({
+    target: `${packageId}::tunnel::create_receiver_config`,
+    arguments: [
+      tx5.pure.u64(4021),  // Platform type
+      tx5.pure.address(creatorAddress),
+      tx5.pure.u64(900),  // 9%
+    ],
+  });
+
+  const receiverConfigs5 = tx5.makeMoveVec({
+    type: `${packageId}::tunnel::ReceiverConfig`,
+    elements: [creatorAConfig5, creatorBConfig5, referrerConfig5, platformConfig5],
+  });
+
   tx5.moveCall({
     target: `${packageId}::tunnel::create_creator_config`,
     arguments: [
       tx5.pure.address(creatorAddress),
-      tx5.pure.address(creatorAddress),
       tx5.pure.vector('u8', Array.from(creatorPublicKey)),
       tx5.pure.string('1-second grace period config'),
-      tx5.pure.u64(500),
-      tx5.pure.u64(200),
-      tx5.pure.address(creatorAddress),
+      receiverConfigs5,
       tx5.pure.u64(1000),  // grace_period_ms: 1 second
     ],
   });
