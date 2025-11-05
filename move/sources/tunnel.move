@@ -179,11 +179,14 @@ public fun create_creator_config(
     assert!(vector::length(&public_key) == 32, E_INVALID_PUBLIC_KEY);
 
     // Validate fee percentages don't exceed 100%
-    let total_fee_bps = vector::fold!(
-        receiver_configs,
-        0,
-        |acc, receiver_config| acc + receiver_config.fee_bps,
-    );
+    let mut total_fee_bps = 0u64;
+    let mut i = 0;
+    let len = vector::length(&receiver_configs);
+    while (i < len) {
+        let receiver_config = vector::borrow(&receiver_configs, i);
+        total_fee_bps = total_fee_bps + receiver_config.fee_bps;
+        i = i + 1;
+    };
     assert!(total_fee_bps < BASIS_POINTS, E_INVALID_FEE_PERCENTAGE);
 
     let creator = ctx.sender();
@@ -327,7 +330,9 @@ fun claim_internal<T>(
 
     while (i < len) {
         let receiver_config = vector::borrow(receiver_configs, i);
-        if (receiver_config._type == RECEIVER_TYPE_REFERER_ADDRESS && receiver_config._address == @0x0) {
+        if (
+            receiver_config._type == RECEIVER_TYPE_REFERER_ADDRESS && receiver_config._address == @0x0
+        ) {
             has_empty_referrer = true;
             referrer_fee_bps = receiver_config.fee_bps;
         };
@@ -343,7 +348,9 @@ fun claim_internal<T>(
         let receiver_config = vector::borrow(receiver_configs, i);
 
         // Skip referrer with 0x0 address (will be distributed to creators)
-        if (receiver_config._type == RECEIVER_TYPE_REFERER_ADDRESS && receiver_config._address == @0x0) {
+        if (
+            receiver_config._type == RECEIVER_TYPE_REFERER_ADDRESS && receiver_config._address == @0x0
+        ) {
             i = i + 1;
             continue
         };
@@ -351,8 +358,11 @@ fun claim_internal<T>(
         let mut fee_amount = (claim_increment * receiver_config.fee_bps) / BASIS_POINTS;
 
         // If this is a creator and we have empty referrer, add their share of referrer fee
-        if (has_empty_referrer && receiver_config._type == RECEIVER_TYPE_CREATOR_ADDRESS && creator_count > 0) {
-            let referrer_share = (claim_increment * referrer_fee_bps) / BASIS_POINTS / creator_count;
+        if (
+            has_empty_referrer && receiver_config._type == RECEIVER_TYPE_CREATOR_ADDRESS && creator_count > 0
+        ) {
+            let referrer_share =
+                (claim_increment * referrer_fee_bps) / BASIS_POINTS / creator_count;
             fee_amount = fee_amount + referrer_share;
         };
 
