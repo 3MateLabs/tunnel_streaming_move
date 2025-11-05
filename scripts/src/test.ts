@@ -82,10 +82,12 @@ async function test() {
   }
 
   // Get public keys
+  // Note: In this test, creator and operator are the same person
+  // The creator public key is used as the operator_public_key in the contract (for signing claims)
   const creatorPublicKey = getPublicKey(creatorKeypair);
   const payerPublicKey = getPublicKey(payerKeypair);
 
-  console.log(`Creator Public Key: ${bytesToHex(creatorPublicKey)}`);
+  console.log(`Creator Public Key (used as operator key): ${bytesToHex(creatorPublicKey)}`);
   console.log(`Payer Public Key: ${bytesToHex(payerPublicKey)}\n`);
 
   // ============================================================================
@@ -141,8 +143,8 @@ async function test() {
   tx1.moveCall({
     target: `${packageId}::tunnel::create_creator_config`,
     arguments: [
-      tx1.pure.address(creatorAddress),  // operator (creator is operator)
-      tx1.pure.vector('u8', Array.from(creatorPublicKey)),
+      tx1.pure.address(creatorAddress),  // operator address (in tests, creator is also operator)
+      tx1.pure.vector('u8', Array.from(creatorPublicKey)),  // operator_public_key (for signing claims)
       tx1.pure.string('Test creator config'),
       receiverConfigs,
       tx1.pure.u64(3600000),  // grace_period_ms: 60 minutes (for normal tests)

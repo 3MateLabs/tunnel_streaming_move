@@ -9,7 +9,8 @@
     "verify-deletion": "tsx src/verify-deletion.ts",
     "audit": "tsx src/audit.ts",
     "test:multiple-claims": "tsx src/test-multiple-claims.ts",
-    "test:all": "npm run test && npm run verify-deletion && npm run audit"
+    "test:all": "npm run test && npm run verify-deletion && npm run audit",
+    "generate-keypair": "tsx src/generate-keypair.ts"
   },
   "dependencies": {
     "@mysten/sui": "^1.15.0",

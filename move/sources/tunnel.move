@@ -57,8 +57,8 @@ public struct CreatorConfig has key, store {
     operator: address,
     /// Fee receiver address (where creator's fees are sent)
     receiver_configs: vector<ReceiverConfig>,
-    /// Creator's Ed25519 public key (32 bytes)
-    public_key: vector<u8>,
+    /// Operator's Ed25519 public key (32 bytes) for signing claim messages
+    operator_public_key: vector<u8>,
     /// Optional metadata (e.g., creator name, description)
     metadata: String,
     /// Grace period for tunnel closure in milliseconds (e.g., 3600000 = 60 minutes, 1000 = 1 second)
@@ -75,7 +75,7 @@ public struct Tunnel<phantom T> has key, store {
     receiver_configs: vector<ReceiverConfig>,
     // Public keys
     payer_public_key: vector<u8>,
-    creator_public_key: vector<u8>,
+    operator_public_key: vector<u8>,
     credential: vector<u8>,
     grace_period_ms: u64, // Grace period in milliseconds
     // Balances
@@ -98,7 +98,7 @@ public struct ClaimReceipt has drop {
 public struct CreatorConfigCreated has copy, drop {
     config_id: ID,
     creator: address,
-    public_key: vector<u8>,
+    operator_public_key: vector<u8>,
 }
 
 /// Event: Tunnel opened
@@ -160,7 +160,7 @@ public fun create_receiver_config(
 ///
 /// # Arguments
 /// * `operator` - Operator address (can claim on behalf of creator)
-/// * `public_key` - Creator's Ed25519 public key (32 bytes)
+/// * `operator_public_key` - Operator's Ed25519 public key (32 bytes) for signing claim messages
 /// * `metadata` - Optional metadata (e.g., creator name, description)
 /// * `receiver_configs` - Vector of receiver configurations for fee distribution
 /// * `grace_period_ms` - Grace period for tunnel closure in milliseconds
@@ -169,14 +169,14 @@ public fun create_receiver_config(
 /// Note: Creator is automatically set to the transaction sender (ctx.sender())
 public fun create_creator_config(
     operator: address,
-    public_key: vector<u8>,
+    operator_public_key: vector<u8>,
     metadata: String,
     receiver_configs: vector<ReceiverConfig>,
     grace_period_ms: u64,
     ctx: &mut TxContext,
 ) {
     // Validate public key size (Ed25519 = 32 bytes)
-    assert!(vector::length(&public_key) == 32, E_INVALID_PUBLIC_KEY);
+    assert!(vector::length(&operator_public_key) == 32, E_INVALID_PUBLIC_KEY);
 
     // Validate fee percentages don't exceed 100%
     let mut total_fee_bps = 0u64;
@@ -195,7 +195,7 @@ public fun create_creator_config(
         creator,
         operator,
         receiver_configs,
-        public_key,
+        operator_public_key,
         metadata,
         grace_period_ms,
     };
@@ -205,7 +205,7 @@ public fun create_creator_config(
     sui::event::emit(CreatorConfigCreated {
         config_id,
         creator,
-        public_key,
+        operator_public_key,
     });
 
     transfer::share_object(config);
@@ -262,7 +262,7 @@ public fun open_tunnel<T>(
         operator: creator_config.operator,
         receiver_configs,
         payer_public_key,
-        creator_public_key: creator_config.public_key,
+        operator_public_key: creator_config.operator_public_key,
         credential,
         grace_period_ms: creator_config.grace_period_ms,
         total_deposit,
@@ -564,7 +564,7 @@ fun close_tunnel_and_refund<T>(
         operator: _,
         receiver_configs: _,
         payer_public_key: _,
-        creator_public_key: _,
+        operator_public_key: _,
         credential: _,
         grace_period_ms: _,
         total_deposit: _,
@@ -595,8 +595,8 @@ public fun creator_config_creator(config: &CreatorConfig): address {
     config.creator
 }
 
-public fun creator_config_public_key(config: &CreatorConfig): vector<u8> {
-    config.public_key
+public fun creator_config_operator_public_key(config: &CreatorConfig): vector<u8> {
+    config.operator_public_key
 }
 
 public fun creator_config_metadata(config: &CreatorConfig): String {
