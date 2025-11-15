@@ -87,7 +87,7 @@ async function audit() {
     arguments: [
       tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
       tx1.pure.address(creatorAddress),
-      tx1.pure.u64(4500),  // 45%
+      tx1.pure.u64(5000),  // 50%
     ],
   });
 
@@ -96,7 +96,7 @@ async function audit() {
     arguments: [
       tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
       tx1.pure.address(creatorAddress),
-      tx1.pure.u64(900),  // 9%
+      tx1.pure.u64(1000),  // 10%
     ],
   });
 
@@ -105,7 +105,7 @@ async function audit() {
     arguments: [
       tx1.pure.u64(4022),  // RECEIVER_TYPE_REFERER_ADDRESS
       tx1.pure.address('0x0'),
-      tx1.pure.u64(2700),  // 27%
+      tx1.pure.u64(3000),  // 30%
     ],
   });
 
@@ -114,7 +114,7 @@ async function audit() {
     arguments: [
       tx1.pure.u64(4021),  // Platform type
       tx1.pure.address(creatorAddress),
-      tx1.pure.u64(900),  // 9%
+      tx1.pure.u64(1000),  // 10%
     ],
   });
 

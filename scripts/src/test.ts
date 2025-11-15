@@ -97,14 +97,14 @@ async function test() {
 
   const tx1 = new Transaction();
 
-  // Create receiver configs for fee distribution (total 90%, leaving 10% for operator)
-  // CreatorA: 45%, CreatorB: 9%, Referrer: 27%, Platform: 9%
+  // Create receiver configs for fee distribution (total 100%)
+  // CreatorA: 50%, CreatorB: 10%, Referrer: 30%, Platform: 10%
   const creatorAConfig = tx1.moveCall({
     target: `${packageId}::tunnel::create_receiver_config`,
     arguments: [
       tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
       tx1.pure.address(creatorAddress),
-      tx1.pure.u64(4500),  // 45%
+      tx1.pure.u64(5000),  // 50%
     ],
   });
 
@@ -113,7 +113,7 @@ async function test() {
     arguments: [
       tx1.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
       tx1.pure.address(creatorAddress),  // using same address for testing
-      tx1.pure.u64(900),  // 9%
+      tx1.pure.u64(1000),  // 10%
     ],
   });
 
@@ -122,7 +122,7 @@ async function test() {
     arguments: [
       tx1.pure.u64(4022),  // RECEIVER_TYPE_REFERER_ADDRESS
       tx1.pure.address('0x0'),  // Will be filled when tunnel opens
-      tx1.pure.u64(2700),  // 27%
+      tx1.pure.u64(3000),  // 30%
     ],
   });
 
@@ -131,7 +131,7 @@ async function test() {
     arguments: [
       tx1.pure.u64(4021),  // Platform type (not a creator or referrer)
       tx1.pure.address(creatorAddress),  // using creator address for testing
-      tx1.pure.u64(900),  // 9%
+      tx1.pure.u64(1000),  // 10%
     ],
   });
 
@@ -371,7 +371,7 @@ async function test() {
     arguments: [
       tx5.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
       tx5.pure.address(creatorAddress),
-      tx5.pure.u64(4500),  // 45%
+      tx5.pure.u64(5000),  // 50%
     ],
   });
 
@@ -380,7 +380,7 @@ async function test() {
     arguments: [
       tx5.pure.u64(4020),  // RECEIVER_TYPE_CREATOR_ADDRESS
       tx5.pure.address(creatorAddress),
-      tx5.pure.u64(900),  // 9%
+      tx5.pure.u64(1000),  // 10%
     ],
   });
 
@@ -389,7 +389,7 @@ async function test() {
     arguments: [
       tx5.pure.u64(4022),  // RECEIVER_TYPE_REFERER_ADDRESS
       tx5.pure.address('0x0'),
-      tx5.pure.u64(2700),  // 27%
+      tx5.pure.u64(3000),  // 30%
     ],
   });
 
@@ -398,7 +398,7 @@ async function test() {
     arguments: [
       tx5.pure.u64(4021),  // Platform type
       tx5.pure.address(creatorAddress),
-      tx5.pure.u64(900),  // 9%
+      tx5.pure.u64(1000),  // 10%
     ],
   });
 

@@ -134,6 +134,15 @@ public struct TunnelClosed has copy, drop {
     closed_by: address,
 }
 
+/// Event: Direct payment processed
+public struct PaymentProcessed has copy, drop {
+    config_id: ID,
+    payer: address,
+    referrer: address,
+    amount: u64,
+    timestamp_ms: u64,
+}
+
 // ============================================================================
 // Creator Configuration Functions
 // ============================================================================
@@ -187,7 +196,7 @@ public fun create_creator_config(
         total_fee_bps = total_fee_bps + receiver_config.fee_bps;
         i = i + 1;
     };
-    assert!(total_fee_bps < BASIS_POINTS, E_INVALID_FEE_PERCENTAGE);
+    assert!(total_fee_bps == BASIS_POINTS, E_INVALID_FEE_PERCENTAGE);
 
     let creator = ctx.sender();
     let config = CreatorConfig {
@@ -209,6 +218,65 @@ public fun create_creator_config(
     });
 
     transfer::share_object(config);
+}
+
+/// Process a direct payment and distribute to receivers
+///
+/// This function takes a payment coin and distributes it according to the creator's
+/// receiver_configs. If referrer is 0x0, the referrer's share is distributed evenly
+/// to all RECEIVER_TYPE_CREATOR_ADDRESS receivers.
+///
+/// # Arguments
+/// * `creator_config` - Creator's configuration (shared object reference)
+/// * `referrer` - Referrer address (use 0x0 for none)
+/// * `payment` - Payment coin to be distributed
+/// * `clock` - Sui clock for timestamp
+/// * `ctx` - Transaction context
+#[allow(lint(self_transfer))]
+public fun process_payment<T>(
+    creator_config: &CreatorConfig,
+    referrer: address,
+    payment: Coin<T>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let payer = ctx.sender();
+    let payment_amount = coin::value(&payment);
+
+    // Convert coin to balance for splitting
+    let payment_balance = coin::into_balance(payment);
+
+    // Copy receiver configs and update referrer address if provided
+    let mut receiver_configs = creator_config.receiver_configs;
+    let mut i = 0;
+    let len = vector::length(&receiver_configs);
+
+    while (i < len) {
+        let receiver = vector::borrow_mut(&mut receiver_configs, i);
+        // If this is a referrer type receiver, update the address
+        if (receiver._type == RECEIVER_TYPE_REFERER_ADDRESS) {
+            receiver._address = referrer;
+        };
+        i = i + 1;
+    };
+
+    // Distribute payment to receivers
+    distribute_fees(
+        &receiver_configs,
+        payment_amount,
+        payment_balance,
+        creator_config.operator, // Remaining balance (rounding dust) goes to operator
+        ctx,
+    );
+
+    // Emit payment event
+    sui::event::emit(PaymentProcessed {
+        config_id: object::id(creator_config),
+        payer,
+        referrer,
+        amount: payment_amount,
+        timestamp_ms: clock::timestamp_ms(clock),
+    });
 }
 
 // ============================================================================
@@ -285,43 +353,29 @@ public fun open_tunnel<T>(
     transfer::share_object(tunnel);
 }
 
-/// Internal claim logic shared by claim() and claim_for_testing()
-/// Performs validation, fee distribution, and returns ClaimReceipt
-fun claim_internal<T>(
-    tunnel: &mut Tunnel<T>,
-    cumulative_amount: u64,
-    sender: address,
+/// Distribute fees to receivers according to receiver_configs
+///
+/// This internal function handles the fee distribution logic:
+/// 1. First pass: Check for empty referrer (0x0) and count creators
+/// 2. Second pass: Distribute fees to receivers
+///    - If referrer is 0x0, their share is split evenly among creators
+/// 3. Transfer remaining balance (rounding dust) to specified recipient
+///
+/// # Arguments
+/// * `receiver_configs` - Vector of receiver configurations
+/// * `total_amount` - Total amount to distribute
+/// * `balance` - Balance to split from
+/// * `remaining_recipient` - Address to receive remaining balance after distribution
+/// * `ctx` - Transaction context
+#[allow(lint(self_transfer))]
+fun distribute_fees<T>(
+    receiver_configs: &vector<ReceiverConfig>,
+    total_amount: u64,
+    mut balance: Balance<T>,
+    remaining_recipient: address,
     ctx: &mut TxContext,
-): ClaimReceipt {
-    // Only creator or operator can claim
-    assert!(sender == tunnel.creator || sender == tunnel.operator, E_NOT_AUTHORIZED);
-    assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
-
-    // Cumulative amount must be greater than already claimed amount
-    assert!(cumulative_amount > tunnel.claimed_amount, E_INVALID_AMOUNT);
-
-    // Check sufficient balance for the increment
-    assert!(cumulative_amount <= tunnel.total_deposit, E_INSUFFICIENT_BALANCE);
-
-    // Calculate increment (actual amount to claim this time)
-    let claim_increment = cumulative_amount - tunnel.claimed_amount;
-
-    // Update claimed amount to new cumulative total
-    tunnel.claimed_amount = cumulative_amount;
-
-    // Emit claim event
-    sui::event::emit(FundsClaimed {
-        tunnel_id: object::uid_to_inner(&tunnel.id),
-        amount: claim_increment,
-        total_claimed: tunnel.claimed_amount,
-        claimed_by: sender,
-    });
-
-    // Split claimed increment from balance
-    let mut claimed_balance = balance::split(&mut tunnel.balance, claim_increment);
-
+) {
     // First pass: Check for referrer with 0x0 and count creators
-    let receiver_configs = &tunnel.receiver_configs;
     let len = vector::length(receiver_configs);
     let mut has_empty_referrer = false;
     let mut referrer_fee_bps = 0u64;
@@ -355,20 +409,19 @@ fun claim_internal<T>(
             continue
         };
 
-        let mut fee_amount = (claim_increment * receiver_config.fee_bps) / BASIS_POINTS;
+        let mut fee_amount = (total_amount * receiver_config.fee_bps) / BASIS_POINTS;
 
         // If this is a creator and we have empty referrer, add their share of referrer fee
         if (
             has_empty_referrer && receiver_config._type == RECEIVER_TYPE_CREATOR_ADDRESS && creator_count > 0
         ) {
-            let referrer_share =
-                (claim_increment * referrer_fee_bps) / BASIS_POINTS / creator_count;
+            let referrer_share = (total_amount * referrer_fee_bps) / BASIS_POINTS / creator_count;
             fee_amount = fee_amount + referrer_share;
         };
 
         if (fee_amount > 0) {
             let receiver_coin = coin::from_balance(
-                balance::split(&mut claimed_balance, fee_amount),
+                balance::split(&mut balance, fee_amount),
                 ctx,
             );
             transfer::public_transfer(receiver_coin, receiver_config._address);
@@ -377,14 +430,57 @@ fun claim_internal<T>(
         i = i + 1;
     };
 
-    // Transfer remaining balance (after all fees) to creator/operator who called claim
-    let remaining = balance::value(&claimed_balance);
+    // Transfer remaining balance (rounding dust) to specified recipient
+    let remaining = balance::value(&balance);
     if (remaining > 0) {
-        let remaining_coin = coin::from_balance(claimed_balance, ctx);
-        transfer::public_transfer(remaining_coin, sender);
+        let remaining_coin = coin::from_balance(balance, ctx);
+        transfer::public_transfer(remaining_coin, remaining_recipient);
     } else {
-        balance::destroy_zero(claimed_balance);
+        balance::destroy_zero(balance);
     };
+}
+
+/// Internal claim logic shared by claim() and claim_for_testing()
+/// Performs validation, fee distribution, and returns ClaimReceipt
+fun claim_internal<T>(
+    tunnel: &mut Tunnel<T>,
+    cumulative_amount: u64,
+    sender: address,
+    ctx: &mut TxContext,
+): ClaimReceipt {
+    // Only creator or operator can claim
+    assert!(sender == tunnel.creator || sender == tunnel.operator, E_NOT_AUTHORIZED);
+    assert!(!tunnel.is_closed, E_TUNNEL_ALREADY_CLOSED);
+
+    // Cumulative amount must be greater than already claimed amount
+    assert!(cumulative_amount > tunnel.claimed_amount, E_INVALID_AMOUNT);
+
+    // Check sufficient balance for the increment
+    assert!(cumulative_amount <= tunnel.total_deposit, E_INSUFFICIENT_BALANCE);
+
+    // Calculate increment (actual amount to claim this time)
+    let claim_increment = cumulative_amount - tunnel.claimed_amount;
+
+    // Update claimed amount to new cumulative total
+    tunnel.claimed_amount = cumulative_amount;
+
+    // Emit claim event
+    sui::event::emit(FundsClaimed {
+        tunnel_id: object::uid_to_inner(&tunnel.id),
+        amount: claim_increment,
+        total_claimed: tunnel.claimed_amount,
+        claimed_by: sender,
+    });
+
+    // Split claimed increment from balance and distribute to receivers
+    let claimed_balance = balance::split(&mut tunnel.balance, claim_increment);
+    distribute_fees(
+        &tunnel.receiver_configs,
+        claim_increment,
+        claimed_balance,
+        sender, // Remaining balance goes to sender (creator or operator who called claim)
+        ctx,
+    );
 
     // Create and return receipt
     ClaimReceipt {
