@@ -21,6 +21,7 @@ use iota::bcs;
 use iota::clock::{Self, Clock};
 use iota::coin::{Self, Coin};
 use iota::ed25519;
+use iota::object;
 use std::string::String;
 
 /// Error codes
@@ -135,7 +136,7 @@ public struct TunnelClosed has copy, drop {
 }
 
 /// Event: Direct payment processed
-public struct PaymentProcessed has copy, drop {
+public struct PaymentProcessed<phantom T> has copy, drop {
     config_id: ID,
     payer: address,
     referrer: address,
@@ -270,7 +271,7 @@ public fun process_payment<T>(
     );
 
     // Emit payment event
-    iota::event::emit(PaymentProcessed {
+    iota::event::emit(PaymentProcessed<T> {
         config_id: object::id(creator_config),
         payer,
         referrer,
