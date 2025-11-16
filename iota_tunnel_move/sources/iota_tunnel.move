@@ -235,7 +235,7 @@ public fun create_creator_config(
 #[allow(lint(self_transfer))]
 public fun process_payment<T>(
     creator_config: &CreatorConfig,
-    referrer: address,
+    referrer: address, //0x0 for none
     payment: Coin<T>,
     clock: &Clock,
     ctx: &mut TxContext,
