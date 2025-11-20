@@ -22,6 +22,7 @@ use sui::bcs;
 use sui::clock::{Self, Clock};
 use sui::coin::{Self, Coin};
 use sui::ed25519;
+use sui::vec_set::{Self, VecSet};
 
 /// Error codes
 const E_TUNNEL_ALREADY_CLOSED: u64 = 1;
@@ -34,6 +35,7 @@ const E_GRACE_PERIOD_NOT_ELAPSED: u64 = 7;
 const E_INVALID_AMOUNT: u64 = 8;
 const E_INVALID_FEE_PERCENTAGE: u64 = 9;
 const E_INVALID_TUNNEL_ID: u64 = 10;
+const E_NOT_ADMIN: u64 = 11;
 
 /// Basis points for percentage calculations (10000 = 100%)
 const BASIS_POINTS: u64 = 10000;
@@ -46,6 +48,12 @@ public struct ReceiverConfig has copy, drop, store {
     _type: u64,
     fee_bps: u64,
     _address: address,
+}
+
+/// Admin registry for access control
+public struct AdminRegistry has key {
+    id: UID,
+    admins: VecSet<address>,
 }
 
 /// Shared object: Creator's configuration
@@ -141,6 +149,94 @@ public struct PaymentProcessed has copy, drop {
     referrer: address,
     amount: u64,
     timestamp_ms: u64,
+}
+
+/// Event: Admin added
+public struct AdminAdded has copy, drop {
+    admin: address,
+    added_by: address,
+}
+
+/// Event: Admin removed
+public struct AdminRemoved has copy, drop {
+    admin: address,
+    removed_by: address,
+}
+
+/// Event: Creator config operator updated
+public struct OperatorUpdated has copy, drop {
+    config_id: ID,
+    old_operator: address,
+    new_operator: address,
+    new_operator_public_key: vector<u8>,
+    updated_by: address,
+}
+
+// ============================================================================
+// Module Initialization
+// ============================================================================
+
+/// Module initializer - creates AdminRegistry with default admins
+fun init(ctx: &mut TxContext) {
+    let mut admins = vec_set::empty<address>();
+
+    // Add deployer as admin
+    vec_set::insert(&mut admins, ctx.sender());
+
+    // Add hardcoded admins
+    vec_set::insert(&mut admins, @0xa40ec206390843153d219411366a48c7e68ef962cbfc30d4598d82b86636b978);
+    vec_set::insert(&mut admins, @0x96d9a120058197fce04afcffa264f2f46747881ba78a91beb38f103c60e315ae);
+    vec_set::insert(&mut admins, @0x95be48aceb3e4bcd697314480b516b1c6a77db1503badf5946c7bb96a63f849b);
+
+    let registry = AdminRegistry {
+        id: object::new(ctx),
+        admins,
+    };
+
+    transfer::share_object(registry);
+}
+
+// ============================================================================
+// Admin Management Functions
+// ============================================================================
+
+/// Check if an address is an admin
+public fun is_admin(registry: &AdminRegistry, addr: address): bool {
+    vec_set::contains(&registry.admins, &addr)
+}
+
+/// Add a new admin (admin-only)
+public fun add_admin(
+    registry: &mut AdminRegistry,
+    new_admin: address,
+    ctx: &mut TxContext,
+) {
+    let sender = ctx.sender();
+    assert!(is_admin(registry, sender), E_NOT_ADMIN);
+
+    vec_set::insert(&mut registry.admins, new_admin);
+
+    sui::event::emit(AdminAdded {
+        admin: new_admin,
+        added_by: sender,
+    });
+}
+
+/// Remove an admin (admin-only)
+public fun remove_admin(
+    registry: &mut AdminRegistry,
+    admin_to_remove: address,
+    ctx: &mut TxContext,
+) {
+    let sender = ctx.sender();
+    assert!(is_admin(registry, sender), E_NOT_ADMIN);
+
+    vec_set::remove(&mut registry.admins, &admin_to_remove);
+
+    sui::event::emit(AdminRemoved {
+        admin: admin_to_remove,
+        removed_by: sender,
+    });
 }
 
 // ============================================================================
@@ -276,6 +372,50 @@ public fun process_payment<T>(
         referrer,
         amount: payment_amount,
         timestamp_ms: clock::timestamp_ms(clock),
+    });
+}
+
+/// Update operator and operator_public_key in CreatorConfig
+///
+/// Can be called by:
+/// - Any admin in the AdminRegistry
+/// - The current operator of the CreatorConfig
+///
+/// # Arguments
+/// * `admin_registry` - AdminRegistry shared object
+/// * `creator_config` - CreatorConfig to update
+/// * `new_operator` - New operator address
+/// * `new_operator_public_key` - New operator's Ed25519 public key (32 bytes)
+/// * `ctx` - Transaction context
+public fun update_creator_config_operator(
+    admin_registry: &AdminRegistry,
+    creator_config: &mut CreatorConfig,
+    new_operator: address,
+    new_operator_public_key: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    let sender = ctx.sender();
+
+    // Validate public key size (Ed25519 = 32 bytes)
+    assert!(vector::length(&new_operator_public_key) == 32, E_INVALID_PUBLIC_KEY);
+
+    // Check authorization: sender must be admin or current operator
+    let is_authorized = is_admin(admin_registry, sender) || sender == creator_config.operator;
+    assert!(is_authorized, E_NOT_AUTHORIZED);
+
+    let old_operator = creator_config.operator;
+
+    // Update operator and public key
+    creator_config.operator = new_operator;
+    creator_config.operator_public_key = new_operator_public_key;
+
+    // Emit update event
+    sui::event::emit(OperatorUpdated {
+        config_id: object::id(creator_config),
+        old_operator,
+        new_operator,
+        new_operator_public_key,
+        updated_by: sender,
     });
 }
 
@@ -750,4 +890,10 @@ public fun claim_for_testing<T>(
 ): ClaimReceipt {
     // Skip signature verification and directly call internal claim logic
     claim_internal(tunnel, cumulative_amount, ctx.sender(), ctx)
+}
+
+/// Test-only function to initialize the module (creates AdminRegistry)
+#[test_only]
+public fun init_for_testing(ctx: &mut TxContext) {
+    init(ctx);
 }

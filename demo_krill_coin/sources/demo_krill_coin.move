@@ -15,7 +15,7 @@ public struct DEMO_KRILL_COIN has drop {}
 fun init(krill_coin: DEMO_KRILL_COIN, ctx: &mut tx_context::TxContext) {
     let (mut treasury_cap, coin_metadata) = coin::create_currency<DEMO_KRILL_COIN>(
         krill_coin,
-        5,
+        9,
         b"dKRILL",
         b"Demo KRILL Coin",
         b"Demo KRILL Coin for Demo Purposes",
