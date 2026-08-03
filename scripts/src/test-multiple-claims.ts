@@ -1,16 +1,18 @@
-import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
+  TunnelClient,
+  getSuiGrpcUrl,
   createKeypair,
   getPublicKey,
   signClaimMessage,
   suiToMist,
   mistToSui,
   getCreatedObjects,
-  waitForTransaction,
+  assertFinalizedDigest,
+  runMain,
 } from './utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,12 +30,11 @@ async function testMultipleClaims() {
       .map(line => line.split('=').map(s => s.trim()))
   );
 
-  const rpcUrl = env.SUI_RPC_URL || 'https://fullnode.testnet.sui.io:443';
   const packageId = env.PACKAGE_ID;
   const creatorMnemonic = env.CREATOR_MNEMONIC;
   const payerMnemonic = env.PAYER_MNEMONIC;
 
-  const client = new SuiClient({ url: rpcUrl });
+  const client = new TunnelClient(getSuiGrpcUrl(env));
   const creatorKeypair = createKeypair(creatorMnemonic);
   const payerKeypair = createKeypair(payerMnemonic);
   const creatorPublicKey = getPublicKey(creatorKeypair);
@@ -98,13 +99,13 @@ async function testMultipleClaims() {
     ],
   });
 
-  const result1 = await client.signAndExecuteTransaction({
+  const result1 = await client.executeAndConfirm({
     transaction: tx1,
     signer: creatorKeypair,
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
   });
 
-  await waitForTransaction(client, result1.digest);
+  await assertFinalizedDigest(client, result1.digest);
 
   const configId = getCreatedObjects(result1).find(obj =>
     obj.objectType.includes('CreatorConfig')
@@ -130,13 +131,13 @@ async function testMultipleClaims() {
     ],
   });
 
-  const result2 = await client.signAndExecuteTransaction({
+  const result2 = await client.executeAndConfirm({
     transaction: tx2,
     signer: payerKeypair,
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
   });
 
-  await waitForTransaction(client, result2.digest);
+  await assertFinalizedDigest(client, result2.digest);
 
   const tunnelId = getCreatedObjects(result2).find(obj =>
     obj.objectType.includes('Tunnel')
@@ -147,7 +148,7 @@ async function testMultipleClaims() {
 
   // Function to check tunnel state
   async function checkTunnelState(label: string) {
-    const tunnel = await client.getObject({
+    const tunnel = await client.object({
       id: tunnelId!,
       options: { showContent: true },
     });
@@ -208,7 +209,7 @@ async function testMultipleClaims() {
     });
 
     try {
-      const result = await client.signAndExecuteTransaction({
+      const result = await client.executeAndConfirm({
         transaction: tx,
         signer: creatorKeypair,
         options: { showEffects: true, showEvents: true },
@@ -217,7 +218,7 @@ async function testMultipleClaims() {
       console.log(`✅ Claim succeeded: ${result.digest}`);
       console.log(`   Status: ${(result.effects as any)?.status?.status}\n`);
 
-      await waitForTransaction(client, result.digest);
+      await assertFinalizedDigest(client, result.digest);
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       const state = await checkTunnelState(`State after claim ${nonce}`);
@@ -266,7 +267,7 @@ async function testMultipleClaims() {
   });
 
   try {
-    await client.signAndExecuteTransaction({
+    await client.executeAndConfirm({
       transaction: txOver,
       signer: creatorKeypair,
       options: { showEffects: true },
@@ -305,7 +306,7 @@ async function testMultipleClaims() {
   });
 
   try {
-    await client.signAndExecuteTransaction({
+    await client.executeAndConfirm({
       transaction: txReplay,
       signer: creatorKeypair,
       options: { showEffects: true },
@@ -336,4 +337,4 @@ async function testMultipleClaims() {
   console.log('🎉 All tests passed! Contract correctly handles multiple claims.');
 }
 
-testMultipleClaims().catch(console.error);
+runMain(import.meta.url, testMultipleClaims);

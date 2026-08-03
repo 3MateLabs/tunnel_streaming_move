@@ -1,8 +1,26 @@
-import { SuiClient } from '@mysten/sui/client';
+import type { SuiClientTypes } from '@mysten/sui/client';
+import type { Signer } from '@mysten/sui/cryptography';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Transaction } from '@mysten/sui/transactions';
+import type { Transaction } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
-import { toB64 } from '@mysten/sui/utils';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/** Prevent imported scripts from executing and ensure top-level failures exit non-zero. */
+export function isMainModule(metaUrl: string): boolean {
+  const entrypoint = process.argv[1];
+  return entrypoint !== undefined
+    && path.resolve(entrypoint) === path.resolve(fileURLToPath(metaUrl));
+}
+
+export function runMain(metaUrl: string, main: () => Promise<void>): void {
+  if (!isMainModule(metaUrl)) return;
+  void main().catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
 
 /**
  * Create a keypair from mnemonic or private key
@@ -155,49 +173,188 @@ export function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-/**
- * Wait for transaction confirmation
- */
-export async function waitForTransaction(
-  client: SuiClient,
-  digest: string,
-): Promise<any> {
-  console.log(`Waiting for transaction: ${digest}`);
+type TransactionStatus = {
+  success: boolean;
+  error?: { message?: string } | null;
+};
 
-  const result = await client.waitForTransaction({
-    digest,
-    options: {
-      showEffects: true,
-      showEvents: true,
-      showObjectChanges: true,
-    },
-  });
+type TransactionLike = {
+  digest: string;
+  status: TransactionStatus;
+};
 
-  if (result.effects?.status.status !== 'success') {
-    throw new Error(`Transaction failed: ${result.effects?.status.error}`);
+type TransactionResultLike<T extends TransactionLike> =
+  | { $kind: 'Transaction'; Transaction: T; FailedTransaction?: never }
+  | { $kind: 'FailedTransaction'; Transaction?: never; FailedTransaction: T };
+
+function requireSuccessfulTransaction<T extends TransactionLike>(
+  result: TransactionResultLike<T>,
+): T {
+  const transaction = result.$kind === 'Transaction'
+    ? result.Transaction
+    : result.FailedTransaction;
+
+  if (result.$kind === 'FailedTransaction' || !transaction.status.success) {
+    throw new Error(transaction.status.error?.message ?? 'Transaction execution failed');
   }
 
-  return result;
+  return transaction;
 }
 
 /**
- * Get created objects from transaction result
+ * Submit, confirm finality, reject failed status, and require digest equality.
+ * Callers must not expose stream/session/UI success before this resolves.
  */
-export function getCreatedObjects(txResult: any): Array<{ objectId: string; objectType: string }> {
-  const created: Array<{ objectId: string; objectType: string }> = [];
+export async function confirmTransactionWorkflow<
+  Submitted extends TransactionLike,
+  Confirmed extends TransactionLike,
+>(
+  submit: () => Promise<TransactionResultLike<Submitted>>,
+  wait: (digest: string) => Promise<TransactionResultLike<Confirmed>>,
+): Promise<Confirmed> {
+  const submitted = requireSuccessfulTransaction(await submit());
+  const confirmed = requireSuccessfulTransaction(await wait(submitted.digest));
 
-  if (txResult.objectChanges) {
-    for (const change of txResult.objectChanges) {
-      if (change.type === 'created') {
-        created.push({
-          objectId: change.objectId,
-          objectType: change.objectType,
-        });
-      }
+  if (confirmed.digest !== submitted.digest) {
+    throw new Error(
+      `Transaction digest mismatch: submitted ${submitted.digest}, confirmed ${confirmed.digest}`,
+    );
+  }
+
+  return confirmed;
+}
+
+const transactionInclude = {
+  effects: true,
+  events: true,
+  objectTypes: true,
+} as const;
+
+type ConfirmedTransaction = SuiClientTypes.Transaction<typeof transactionInclude>;
+
+type LegacyObjectChange = {
+  type: 'created' | 'deleted' | 'mutated';
+  objectId: string;
+  objectType: string;
+};
+
+export type TunnelTransaction = ConfirmedTransaction & {
+  objectChanges: LegacyObjectChange[];
+};
+
+export function getSuiGrpcUrl(env: Record<string, string>): string {
+  const value = env.SUI_GRPC_URL;
+  if (!value) {
+    throw new Error('SUI_GRPC_URL is required and must point to a Sui gRPC service');
+  }
+
+  const url = new URL(value);
+  if (url.protocol !== 'https:') {
+    throw new Error('SUI_GRPC_URL must use HTTPS');
+  }
+  return url.toString();
+}
+
+function legacyObjectChanges(transaction: ConfirmedTransaction): LegacyObjectChange[] {
+  return transaction.effects.changedObjects.map((change) => ({
+    type: change.idOperation === 'Created'
+      ? 'created'
+      : change.idOperation === 'Deleted'
+        ? 'deleted'
+        : 'mutated',
+    objectId: change.objectId,
+    objectType: transaction.objectTypes[change.objectId]
+      ?? (change.outputState === 'PackageWrite' ? 'package' : 'unknown'),
+  }));
+}
+
+/** SDK2 gRPC/Core client boundary used by every executable script. */
+export class TunnelClient {
+  readonly core: SuiGrpcClient['core'];
+  readonly #confirmedDigests = new Set<string>();
+
+  constructor(baseUrl: string) {
+    const client = new SuiGrpcClient({
+      network: 'testnet',
+      baseUrl,
+    });
+    this.core = client.core;
+  }
+
+  async executeAndConfirm(input: {
+    transaction: Transaction;
+    signer: Signer;
+    options?: unknown;
+  }): Promise<TunnelTransaction> {
+    const confirmed = await confirmTransactionWorkflow<
+      ConfirmedTransaction,
+      ConfirmedTransaction
+    >(
+      () => this.core.signAndExecuteTransaction({
+        transaction: input.transaction,
+        signer: input.signer,
+        include: transactionInclude,
+      }),
+      (digest) => this.core.waitForTransaction({
+        digest,
+        include: transactionInclude,
+      }),
+    );
+
+    this.#confirmedDigests.add(confirmed.digest);
+
+    return Object.assign(confirmed, {
+      objectChanges: legacyObjectChanges(confirmed),
+    });
+  }
+
+  async balance(owner: string): Promise<{ totalBalance: string }> {
+    const response = await this.core.getBalance({ owner });
+    return { totalBalance: response.balance.balance };
+  }
+
+  assertFinalized(digest: string): void {
+    if (!this.#confirmedDigests.has(digest)) {
+      throw new Error(`Transaction ${digest} has not passed strict confirmation`);
     }
   }
 
-  return created;
+  async object(input: { id: string; options?: unknown }): Promise<{
+    data: {
+      objectId: string;
+      content: { dataType: 'moveObject'; fields: Record<string, unknown> } | null;
+    };
+    error?: { code: string };
+  }> {
+    const { object } = await this.core.getObject({
+      objectId: input.id,
+      include: { json: true },
+    });
+    return {
+      data: {
+        objectId: object.objectId,
+        content: object.json
+          ? { dataType: 'moveObject', fields: object.json }
+          : null,
+      },
+    };
+  }
+}
+
+export async function assertFinalizedDigest(
+  client: TunnelClient,
+  digest: string,
+): Promise<void> {
+  client.assertFinalized(digest);
+}
+
+/** Get created objects from a strictly confirmed transaction. */
+export function getCreatedObjects(
+  txResult: TunnelTransaction,
+): Array<{ objectId: string; objectType: string }> {
+  return txResult.objectChanges
+    .filter((change) => change.type === 'created')
+    .map(({ objectId, objectType }) => ({ objectId, objectType }));
 }
 
 /**

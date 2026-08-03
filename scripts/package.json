@@ -10,10 +10,13 @@
     "audit": "tsx src/audit.ts",
     "test:multiple-claims": "tsx src/test-multiple-claims.ts",
     "test:all": "npm run test && npm run verify-deletion && npm run audit",
-    "generate-keypair": "tsx src/generate-keypair.ts"
+    "generate-keypair": "tsx src/generate-keypair.ts",
+    "test:unit": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
   },
   "dependencies": {
-    "@mysten/sui": "^1.15.0",
+    "@mysten/sui": "^2.23.1",
     "@noble/ed25519": "^2.1.0"
   },
   "devDependencies": {

@@ -1,16 +1,18 @@
-import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
+  TunnelClient,
+  getSuiGrpcUrl,
   createKeypair,
   getPublicKey,
   signClaimMessage,
   bytesToHex,
   suiToMist,
   getCreatedObjects,
-  waitForTransaction,
+  assertFinalizedDigest,
+  runMain,
 } from './utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,12 +30,11 @@ async function verifyDeletion() {
       .map(line => line.split('=').map(s => s.trim()))
   );
 
-  const rpcUrl = env.SUI_RPC_URL || 'https://fullnode.testnet.sui.io:443';
   const packageId = env.PACKAGE_ID;
   const creatorMnemonic = env.CREATOR_MNEMONIC;
   const payerMnemonic = env.PAYER_MNEMONIC;
 
-  const client = new SuiClient({ url: rpcUrl });
+  const client = new TunnelClient(getSuiGrpcUrl(env));
   const creatorKeypair = createKeypair(creatorMnemonic);
   const payerKeypair = createKeypair(payerMnemonic);
   const creatorPublicKey = getPublicKey(creatorKeypair);
@@ -97,14 +98,14 @@ async function verifyDeletion() {
     ],
   });
 
-  const result1 = await client.signAndExecuteTransaction({
+  const result1 = await client.executeAndConfirm({
     transaction: tx1,
     signer: creatorKeypair,
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
   });
 
   // Wait for transaction to be finalized
-  await waitForTransaction(client, result1.digest);
+  await assertFinalizedDigest(client, result1.digest);
 
   const configId = getCreatedObjects(result1).find(obj =>
     obj.objectType.includes('CreatorConfig')
@@ -128,14 +129,14 @@ async function verifyDeletion() {
     ],
   });
 
-  const result2 = await client.signAndExecuteTransaction({
+  const result2 = await client.executeAndConfirm({
     transaction: tx2,
     signer: payerKeypair,
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
   });
 
   // Wait for transaction to be finalized
-  await waitForTransaction(client, result2.digest);
+  await assertFinalizedDigest(client, result2.digest);
 
   const tunnelId = getCreatedObjects(result2).find(obj =>
     obj.objectType.includes('Tunnel')
@@ -146,7 +147,7 @@ async function verifyDeletion() {
   // Step 3: Check tunnel exists before close
   console.log('🔍 Step 3: Checking tunnel exists before close...');
   try {
-    const tunnelBefore = await client.getObject({
+    const tunnelBefore = await client.object({
       id: tunnelId!,
       options: { showContent: true },
     });
@@ -193,14 +194,14 @@ async function verifyDeletion() {
     ],
   });
 
-  const result3 = await client.signAndExecuteTransaction({
+  const result3 = await client.executeAndConfirm({
     transaction: tx3,
     signer: creatorKeypair,  // Creator (or operator) claims and closes
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
   });
 
   // Wait for transaction to be finalized
-  await waitForTransaction(client, result3.digest);
+  await assertFinalizedDigest(client, result3.digest);
 
   console.log(`✅ Tunnel claimed and closed: ${result3.digest}\n`);
 
@@ -211,7 +212,7 @@ async function verifyDeletion() {
   await new Promise(resolve => setTimeout(resolve, 2000));
 
   try {
-    const tunnelAfter = await client.getObject({
+    const tunnelAfter = await client.object({
       id: tunnelId!,
       options: { showContent: true },
     });
@@ -257,4 +258,4 @@ async function verifyDeletion() {
   console.log('   - Shared object deletion is supported and working');
 }
 
-verifyDeletion().catch(console.error);
+runMain(import.meta.url, verifyDeletion);
