@@ -1,11 +1,10 @@
-import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { execSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createKeypair, waitForTransaction, getCreatedObjects } from './utils.js';
+import { TunnelClient, getSuiGrpcUrl, createKeypair, getCreatedObjects, runMain } from './utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +27,6 @@ async function deploy() {
     console.error('⚠️  No .env file found. Using defaults.');
   }
 
-  const rpcUrl = env.SUI_RPC_URL || 'https://fullnode.testnet.sui.io:443';
   const creatorMnemonic = env.CREATOR_MNEMONIC;
 
   if (!creatorMnemonic) {
@@ -38,14 +36,14 @@ async function deploy() {
   }
 
   // Create client and keypair
-  const client = new SuiClient({ url: rpcUrl });
+  const client = new TunnelClient(getSuiGrpcUrl(env));
   const creatorKeypair = createKeypair(creatorMnemonic);
   const creatorAddress = creatorKeypair.toSuiAddress();
 
   console.log(`Creator Address: ${creatorAddress}`);
 
   // Check balance
-  const balance = await client.getBalance({ owner: creatorAddress });
+  const balance = await client.balance(creatorAddress);
   console.log(`Balance: ${Number(balance.totalBalance) / 1_000_000_000} SUI\n`);
 
   if (BigInt(balance.totalBalance) < BigInt(100_000_000)) {
@@ -103,7 +101,7 @@ async function deploy() {
 
   // Sign and execute
   try {
-    const result = await client.signAndExecuteTransaction({
+    const result = await client.executeAndConfirm({
       transaction: tx,
       signer: creatorKeypair,
       options: {
@@ -150,4 +148,4 @@ async function deploy() {
   console.log('\n✅ Deployment complete!');
 }
 
-deploy().catch(console.error);
+runMain(import.meta.url, deploy);

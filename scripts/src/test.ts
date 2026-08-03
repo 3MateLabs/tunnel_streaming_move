@@ -1,19 +1,21 @@
-import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
+  TunnelClient,
+  getSuiGrpcUrl,
   createKeypair,
   getPublicKey,
   signClaimMessage,
   signCloseMessage,
-  waitForTransaction,
+  assertFinalizedDigest,
   getCreatedObjects,
   mistToSui,
   suiToMist,
   bytesToHex,
+  runMain,
 } from './utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,7 +43,6 @@ async function test() {
     process.exit(1);
   }
 
-  const rpcUrl = env.SUI_RPC_URL || 'https://fullnode.testnet.sui.io:443';
   const packageId = env.PACKAGE_ID;
   const creatorMnemonic = env.CREATOR_MNEMONIC;
   const payerMnemonic = env.PAYER_MNEMONIC;
@@ -58,7 +59,7 @@ async function test() {
   }
 
   // Create client and keypairs
-  const client = new SuiClient({ url: rpcUrl });
+  const client = new TunnelClient(getSuiGrpcUrl(env));
   const creatorKeypair = createKeypair(creatorMnemonic);
   const payerKeypair = createKeypair(payerMnemonic);
 
@@ -70,8 +71,8 @@ async function test() {
   console.log(`Package ID: ${packageId}\n`);
 
   // Check balances
-  const creatorBalance = await client.getBalance({ owner: creatorAddress });
-  const payerBalance = await client.getBalance({ owner: payerAddress });
+  const creatorBalance = await client.balance(creatorAddress);
+  const payerBalance = await client.balance(payerAddress);
 
   console.log(`Creator Balance: ${mistToSui(creatorBalance.totalBalance)} SUI`);
   console.log(`Payer Balance: ${mistToSui(payerBalance.totalBalance)} SUI\n`);
@@ -151,7 +152,7 @@ async function test() {
     ],
   });
 
-  const result1 = await client.signAndExecuteTransaction({
+  const result1 = await client.executeAndConfirm({
     transaction: tx1,
     signer: creatorKeypair,
     options: {
@@ -199,7 +200,7 @@ async function test() {
     ],
   });
 
-  const result2 = await client.signAndExecuteTransaction({
+  const result2 = await client.executeAndConfirm({
     transaction: tx2,
     signer: payerKeypair,
     options: {
@@ -255,7 +256,7 @@ async function test() {
     ],
   });
 
-  const result3 = await client.signAndExecuteTransaction({
+  const result3 = await client.executeAndConfirm({
     transaction: tx3,
     signer: creatorKeypair,
     options: {
@@ -314,7 +315,7 @@ async function test() {
     ],
   });
 
-  const result4 = await client.signAndExecuteTransaction({
+  const result4 = await client.executeAndConfirm({
     transaction: tx4,
     signer: creatorKeypair,
     options: {
@@ -336,7 +337,7 @@ async function test() {
   console.log('🔍 Test 5: Verifying tunnel was deleted...');
 
   try {
-    const tunnelCheck = await client.getObject({
+    const tunnelCheck = await client.object({
       id: tunnelId,
       options: { showContent: true },
     });
@@ -418,7 +419,7 @@ async function test() {
     ],
   });
 
-  const result5 = await client.signAndExecuteTransaction({
+  const result5 = await client.executeAndConfirm({
     transaction: tx5,
     signer: creatorKeypair,
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
@@ -454,7 +455,7 @@ async function test() {
     ],
   });
 
-  const result6 = await client.signAndExecuteTransaction({
+  const result6 = await client.executeAndConfirm({
     transaction: tx6,
     signer: payerKeypair,
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
@@ -485,7 +486,7 @@ async function test() {
     ],
   });
 
-  const result7 = await client.signAndExecuteTransaction({
+  const result7 = await client.executeAndConfirm({
     transaction: tx7,
     signer: payerKeypair,
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
@@ -511,7 +512,7 @@ async function test() {
     ],
   });
 
-  const result8 = await client.signAndExecuteTransaction({
+  const result8 = await client.executeAndConfirm({
     transaction: tx8,
     signer: payerKeypair,
     options: { showEffects: true, showEvents: true, showObjectChanges: true },
@@ -544,4 +545,4 @@ async function test() {
   console.log(`  - Finalize close: https://testnet.suivision.xyz/txblock/${result8.digest}`);
 }
 
-test().catch(console.error);
+runMain(import.meta.url, test);

@@ -1,5 +1,6 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { fromB64 } from '@mysten/sui/utils';
+import { fromBase64 } from '@mysten/sui/utils';
+import { runMain } from './utils.js';
 
 /**
  * Generate Ed25519 keypair for operator
@@ -24,7 +25,7 @@ async function generateKeypair() {
 
   // Get private key
   const privateKeyB64 = keypair.getSecretKey();
-  const privateKeyBytes = fromB64(privateKeyB64);
+  const privateKeyBytes = fromBase64(privateKeyB64);
   const privateKeyHex = '0x' + Buffer.from(privateKeyBytes).toString('hex');
 
   // Get Sui address
@@ -49,4 +50,4 @@ async function generateKeypair() {
   console.log('\n');
 }
 
-generateKeypair().catch(console.error);
+runMain(import.meta.url, generateKeypair);
